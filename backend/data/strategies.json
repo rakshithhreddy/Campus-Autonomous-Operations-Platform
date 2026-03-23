@@ -244,5 +244,147 @@
     "last_used": "2026-03-23T06:46:21.264532",
     "last_feedback": "",
     "created": "2026-03-23T06:46:21.264542"
+  },
+  {
+    "task_type": "build_simple_todo",
+    "keywords": [
+      "build",
+      "simple",
+      "todo",
+      "list",
+      "app",
+      "with",
+      "express"
+    ],
+    "steps": [
+      {
+        "step_type": "action",
+        "description": "web_search({\"query\": \"build simple todo list app with express\"})",
+        "primitive_or_code": "web_search",
+        "params_template": {
+          "query": "build simple todo list app with express"
+        }
+      },
+      {
+        "step_type": "action",
+        "description": "scrape_data({\"url\": \"https://dev.to/vaibhavgupta09/building-a-simple-todo-api-with-expressjs-41fk\", \"extract\": \")",
+        "primitive_or_code": "scrape_data",
+        "params_template": {
+          "url": "https://dev.to/vaibhavgupta09/building-a-simple-todo-api-with-expressjs-41fk",
+          "extract": "steps, code snippets, explanations"
+        }
+      }
+    ],
+    "success_count": 1,
+    "failure_count": 0,
+    "confidence": 0.5,
+    "positive_feedback": 0,
+    "negative_feedback": 0,
+    "last_used": "2026-03-23T13:09:47.547994",
+    "last_feedback": "",
+    "created": "2026-03-23T13:09:47.547994"
+  },
+  {
+    "task_type": "create_simple_landing",
+    "keywords": [
+      "create",
+      "simple",
+      "landing",
+      "page"
+    ],
+    "steps": [
+      {
+        "step_type": "code",
+        "description": "Code block using ",
+        "primitive_or_code": "html_content = \"\"\"\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Simple Landing Page</title>\n",
+        "params_template": {}
+      },
+      {
+        "step_type": "action",
+        "description": "generate_image({\"prompt\": \"simple landing page HTML code\"})",
+        "primitive_or_code": "generate_image",
+        "params_template": {
+          "prompt": "simple landing page HTML code"
+        }
+      }
+    ],
+    "success_count": 1,
+    "failure_count": 0,
+    "confidence": 0.5,
+    "positive_feedback": 0,
+    "negative_feedback": 0,
+    "last_used": "2026-03-23T13:16:51.385122",
+    "last_feedback": "",
+    "created": "2026-03-23T13:16:51.385122"
+  },
+  {
+    "task_type": "build_simple_calculator",
+    "keywords": [
+      "build",
+      "simple",
+      "calculator",
+      "app"
+    ],
+    "steps": [
+      {
+        "step_type": "action",
+        "description": "web_search({\"query\": \"build simple calculator app with JavaScript\"})",
+        "primitive_or_code": "web_search",
+        "params_template": {
+          "query": "build simple calculator app with JavaScript"
+        }
+      },
+      {
+        "step_type": "action",
+        "description": "scrape_data({\"url\": \"https://www.geeksforgeeks.org/javascript/javascript-calculator/\", \"extract\": \"steps, code e)",
+        "primitive_or_code": "scrape_data",
+        "params_template": {
+          "url": "https://www.geeksforgeeks.org/javascript/javascript-calculator/",
+          "extract": "steps, code examples"
+        }
+      }
+    ],
+    "success_count": 1,
+    "failure_count": 0,
+    "confidence": 0.5,
+    "positive_feedback": 0,
+    "negative_feedback": 0,
+    "last_used": "2026-03-23T13:23:13.953628",
+    "last_feedback": "",
+    "created": "2026-03-23T13:23:13.953628"
+  },
+  {
+    "task_type": "create_hello_world",
+    "keywords": [
+      "create",
+      "hello",
+      "world",
+      "html",
+      "page"
+    ],
+    "steps": [
+      {
+        "step_type": "code",
+        "description": "Code block using ",
+        "primitive_or_code": "html_code = \"\"\"\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Hello World</title>\n</head>\n<bo",
+        "params_template": {}
+      },
+      {
+        "step_type": "action",
+        "description": "generate_image({\"prompt\": \"simple landing page HTML code\"})",
+        "primitive_or_code": "generate_image",
+        "params_template": {
+          "prompt": "simple landing page HTML code"
+        }
+      }
+    ],
+    "success_count": 1,
+    "failure_count": 0,
+    "confidence": 0.5,
+    "positive_feedback": 0,
+    "negative_feedback": 0,
+    "last_used": "2026-03-23T13:23:31.303516",
+    "last_feedback": "",
+    "created": "2026-03-23T13:23:31.303516"
   }
 ]

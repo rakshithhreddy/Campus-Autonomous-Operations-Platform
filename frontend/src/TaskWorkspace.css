@@ -1,12 +1,15 @@
 
 *{box-sizing:border-box;margin:0;padding:0;}
 .app{font-family:var(--font-sans);background:#0d1117;border-radius:12px;border:0.5px solid #30363d;overflow:hidden;display:flex;flex-direction:column;height:780px;}
-.topbar{height:42px;background:#161b22;border-bottom:0.5px solid #30363d;display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0;}
+.topbar{height:42px;background:#161b22;border-bottom:0.5px solid #30363d;display:flex;align-items:center;padding:0 14px;gap:10px;flex-shrink:0;position:relative;z-index:100;}
 .logo{width:26px;height:26px;border-radius:8px;background:#7c3aed;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-weight:500;}
 .brand{font-size:13px;font-weight:500;color:#e6edf3;}
-.online{display:flex;align-items:center;gap:5px;margin-left:auto;}
+.online{display:flex;align-items:center;gap:5px;margin-left:auto;margin-right:10px;}
 .sdot{width:7px;height:7px;border-radius:50%;background:#3fb950;}
 .online span{font-size:10px;color:#8b949e;}
+.toolbar-btn{background:transparent;border:0.5px solid #30363d;border-radius:6px;padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:4px;color:#8b949e;font-size:10px;transition:all 0.15s;font-family:var(--font-sans);}
+.toolbar-btn:hover{background:#7c3aed22;border-color:#7c3aed;color:#d2a8ff;}
+.toolbar-btn:active{transform:scale(0.98);}
 .body{display:flex;flex:1;overflow:hidden;}
 
 /* CHAT COLUMN - always visible */
@@ -27,6 +30,10 @@
 .chat-input-area{padding:8px;border-top:0.5px solid #30363d;}
 .chat-input-area input{width:100%;background:#21262d;border:0.5px solid #30363d;border-radius:8px;padding:7px 10px;font-size:11px;color:#e6edf3;outline:none;font-family:var(--font-sans);}
 .chat-input-area input::placeholder{color:#484f58;}
+.quick-actions-bar{padding:10px 14px;border-top:1px solid #30363d;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#0d1117;}
+.quick-actions-bar button{background:#161b22;border:0.5px solid #30363d;border-radius:6px;padding:6px 10px;font-size:10px;color:#8b949e;cursor:pointer;transition:all 0.15s;white-space:nowrap;font-family:var(--font-sans);}
+.quick-actions-bar button:hover:not(:disabled){background:#7c3aed22;border-color:#7c3aed;color:#d2a8ff;}
+.quick-actions-bar button:disabled{cursor:not-allowed;opacity:0.5;}
 
 /* WORKSPACE AREA */
 .ws-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}

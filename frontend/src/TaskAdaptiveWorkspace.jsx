@@ -42,14 +42,15 @@ function extractCodeFromResponse(messages) {
       if (msg.steps && Array.isArray(msg.steps)) {
         for (let j = msg.steps.length - 1; j >= 0; j--) {
           const step = msg.steps[j];
-          if (step.type === 'code_exec' && step.data?.code) {
+          const stepType = step.event || step.type; // Backend uses 'event', fallback to 'type'
+          if (stepType === 'code_exec' && step.data?.code) {
             return { code: step.data.code, language: detectLanguage(step.data.code) };
           }
           // Also check confirm_needed for code
-          if (step.type === 'confirm_needed' && step.data?.params?.code) {
+          if (stepType === 'confirm_needed' && step.data?.params?.code) {
             return { code: step.data.params.code, language: detectLanguage(step.data.params.code) };
           }
-          if (step.type === 'confirm_needed' && step.data?.code) {
+          if (stepType === 'confirm_needed' && step.data?.code) {
             return { code: step.data.code, language: detectLanguage(step.data.code) };
           }
         }
@@ -123,16 +124,20 @@ function CodeWorkspace({ taskMessage, messages, generatedCode, generatedFiles })
   const lastAIMsg = messages.slice().reverse().find(m => m.role === 'ai' && m.steps);
   if (lastAIMsg?.steps) {
     lastAIMsg.steps.forEach(step => {
-      if (step.type === 'code_exec') {
+      const stepEvent = step.event || step.type; // Backend uses 'event', fallback to 'type'
+      if (stepEvent === 'code_exec') {
         terminalOutput.push({ type: 'cmd', text: '$ Executing code...' });
-      } else if (step.type === 'action_result') {
+        if (step.data?.output) {
+          terminalOutput.push({ type: 'info', text: step.data.output });
+        }
+      } else if (stepEvent === 'action_result' || stepEvent === 'result') {
         const success = step.data?._meta?.success;
         const error = step.data?._meta?.error;
         if (success) {
-          terminalOutput.push({ type: 'ok', text: `✔ ${step.content}` });
+          terminalOutput.push({ type: 'ok', text: `✔ ${step.content || 'Success'}` });
         } else if (error) {
           terminalOutput.push({ type: 'err', text: `✗ ${error}` });
-        } else {
+        } else if (step.content) {
           terminalOutput.push({ type: 'info', text: step.content });
         }
       }
@@ -824,6 +829,42 @@ export default function TaskAdaptiveWorkspace({
             >
               Send
             </button>
+          </div>
+          
+          {/* QUICK ACTIONS - fills empty space */}
+          <div className="quick-actions-bar" style={{padding: '10px 14px', borderTop: '1px solid #30363d', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center'}}>
+            <span style={{fontSize: '10px', color: '#484f58', fontWeight: '500'}}>Quick Start:</span>
+            {[
+              {text: '📝 Write code', task: 'Build a simple todo app with local storage'},
+              {text: '📧 Draft email', task: 'Draft a professional email to my team about project update'},
+              {text: '🎨 Design UI', task: 'Create a landing page design with modern UI'},
+              {text: '📊 Analyze data', task: 'Analyze my CSV file and create visualizations'},
+              {text: '🔍 Research', task: 'Research latest AI trends and summarize key points'}
+            ].map((qa, i) => (
+              <button
+                key={i}
+                onClick={() => {
+                  setInput(qa.task);
+                  setTimeout(() => send(qa.task), 100);
+                }}
+                disabled={loading}
+                style={{
+                  background: '#161b22',
+                  border: '0.5px solid #30363d',
+                  borderRadius: '6px',
+                  padding: '6px 10px',
+                  fontSize: '10px',
+                  color: '#8b949e',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.15s',
+                  whiteSpace: 'nowrap'
+                }}
+                onMouseEnter={(e) => !loading && (e.target.style.background = '#7c3aed22', e.target.style.borderColor = '#7c3aed')}
+                onMouseLeave={(e) => (e.target.style.background = '#161b22', e.target.style.borderColor = '#30363d')}
+              >
+                {qa.text}
+              </button>
+            ))}
           </div>
         </div>
 
