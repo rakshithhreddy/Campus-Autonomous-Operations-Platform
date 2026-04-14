@@ -24,11 +24,31 @@ from dotenv import load_dotenv
 # Load environment early
 load_dotenv()
 
+# If this module is imported as a top-level module (e.g. `cd backend && uvicorn main:app`),
+# relative imports (from .core/ .routes) will fail in submodules. Ensure the repository root
+# is on sys.path so we can import the `backend` package consistently.
+if __package__ in (None, ""):  # pragma: no cover
+    try:
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if repo_root and repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+    except Exception:
+        pass
+
 # Import and setup structured logging FIRST
-from .core.logging_config import (
-    setup_logging, LogConfig, get_logger, 
-    perf_logger, audit_logger, LogContext, timed
-)
+# Support both:
+# - `uvicorn backend.main:app` (package import)
+# - `cd backend && uvicorn main:app` (module import)
+try:
+    from .core.logging_config import (
+        setup_logging, LogConfig, get_logger,
+        perf_logger, audit_logger, LogContext, timed
+    )
+except ImportError:  # pragma: no cover
+    from backend.core.logging_config import (
+        setup_logging, LogConfig, get_logger,
+        perf_logger, audit_logger, LogContext, timed
+    )
 
 # Configure logging based on environment
 log_config = LogConfig(
@@ -40,12 +60,20 @@ setup_logging(log_config)
 logger = get_logger(__name__)
 
 # Import performance and security modules
-from .core.performance import (
-    ai_circuit_breaker, db_circuit_breaker, email_circuit_breaker,
-    response_cache, api_rate_limiter, health_monitor,
-    RequestTracer
-)
-from .core.security import setup_security_middleware
+try:
+    from .core.performance import (
+        ai_circuit_breaker, db_circuit_breaker, email_circuit_breaker,
+        response_cache, api_rate_limiter, health_monitor,
+        RequestTracer
+    )
+    from .core.security import setup_security_middleware
+except ImportError:  # pragma: no cover
+    from backend.core.performance import (
+        ai_circuit_breaker, db_circuit_breaker, email_circuit_breaker,
+        response_cache, api_rate_limiter, health_monitor,
+        RequestTracer
+    )
+    from backend.core.security import setup_security_middleware
 
 # Force UTF-8 encoding for stdout/stderr on Windows
 if sys.platform.startswith('win'):
@@ -56,15 +84,24 @@ if sys.platform.startswith('win'):
         pass
 
 # Import database - use Supabase (production)
-from .database_supabase import init_db, get_db
+try:
+    from .database_supabase import init_db, get_db
+except ImportError:  # pragma: no cover
+    from backend.database_supabase import init_db, get_db
 logger.info("[DB] Using Supabase PostgreSQL")
 
 # Import routes with error handling to prevent one failed import from crashing the app
-from .routes import api, streaming
+try:
+    from .routes import api, streaming
+except ImportError:  # pragma: no cover
+    from backend.routes import api, streaming
 
 # Legacy routes - loaded conditionally
 try:
-    from .routes import agent, plugins, task_agent, tasks, memory
+    try:
+        from .routes import agent, plugins, task_agent, tasks, memory
+    except ImportError:  # pragma: no cover
+        from backend.routes import agent, plugins, task_agent, tasks, memory
     LEGACY_ROUTES_AVAILABLE = True
 except Exception as e:
     LEGACY_ROUTES_AVAILABLE = False
@@ -72,7 +109,10 @@ except Exception as e:
 
 # Try to import new routers - they may fail due to dependencies
 try:
-    from .routes import agent_v2
+    try:
+        from .routes import agent_v2
+    except ImportError:  # pragma: no cover
+        from backend.routes import agent_v2
     AGENT_V2_AVAILABLE = True
     logger.info("[IMPORT] ✅ agent_v2 loaded")
 except Exception as e:
@@ -81,7 +121,10 @@ except Exception as e:
     logger.error(f"[IMPORT] ❌ agent_v2 failed: {e}")
 
 try:
-    from .routes import tasks_v2
+    try:
+        from .routes import tasks_v2
+    except ImportError:  # pragma: no cover
+        from backend.routes import tasks_v2
     TASKS_V2_AVAILABLE = True
     logger.info("[IMPORT] ✅ tasks_v2 loaded")
 except Exception as e:
@@ -90,7 +133,10 @@ except Exception as e:
     logger.error(f"[IMPORT] ❌ tasks_v2 failed: {e}")
 
 try:
-    from .routes import identity
+    try:
+        from .routes import identity
+    except ImportError:  # pragma: no cover
+        from backend.routes import identity
     IDENTITY_AVAILABLE = True
     logger.info("[IMPORT] ✅ identity loaded")
 except Exception as e:
@@ -99,7 +145,10 @@ except Exception as e:
     logger.error(f"[IMPORT] ❌ identity failed: {e}")
 
 try:
-    from .routes import oauth
+    try:
+        from .routes import oauth
+    except ImportError:  # pragma: no cover
+        from backend.routes import oauth
     OAUTH_AVAILABLE = True
     logger.info("[IMPORT] ✅ oauth loaded")
 except Exception as e:
@@ -108,7 +157,10 @@ except Exception as e:
     logger.error(f"[IMPORT] ❌ oauth failed: {e}")
 
 try:
-    from .routes import automation
+    try:
+        from .routes import automation
+    except ImportError:  # pragma: no cover
+        from backend.routes import automation
     AUTOMATION_AVAILABLE = True
     logger.info("[IMPORT] ✅ automation loaded")
 except Exception as e:
@@ -117,7 +169,10 @@ except Exception as e:
     logger.error(f"[IMPORT] ❌ automation failed: {e}")
 
 try:
-    from .routes import integrations
+    try:
+        from .routes import integrations
+    except ImportError:  # pragma: no cover
+        from backend.routes import integrations
     INTEGRATIONS_AVAILABLE = True
     logger.info("[IMPORT] ✅ integrations loaded")
 except Exception as e:
@@ -127,7 +182,10 @@ except Exception as e:
 
 # Messaging webhooks (Telegram, WhatsApp, Voice)
 try:
-    from .routes import messaging
+    try:
+        from .routes import messaging
+    except ImportError:  # pragma: no cover
+        from backend.routes import messaging
     MESSAGING_AVAILABLE = True
     logger.info("[IMPORT] ✅ messaging loaded")
 except Exception as e:
@@ -137,7 +195,10 @@ except Exception as e:
 
 # Teaching mode (workflow learning)
 try:
-    from .routes import teaching
+    try:
+        from .routes import teaching
+    except ImportError:  # pragma: no cover
+        from backend.routes import teaching
     TEACHING_AVAILABLE = True
     logger.info("[IMPORT] ✅ teaching loaded")
 except Exception as e:
@@ -145,12 +206,20 @@ except Exception as e:
     teaching = None
     logger.error(f"[IMPORT] ❌ teaching failed: {e}")
 
-from .core.agent import AgentManager
-from .core.ai_providers import get_ai_router
-from .core.realtime import get_connection_manager, websocket_endpoint
+try:
+    from .core.agent import AgentManager
+    from .core.ai_providers import get_ai_router
+    from .core.realtime import get_connection_manager, websocket_endpoint
+except ImportError:  # pragma: no cover
+    from backend.core.agent import AgentManager
+    from backend.core.ai_providers import get_ai_router
+    from backend.core.realtime import get_connection_manager, websocket_endpoint
 
 # Import scheduler
-from .agent.scheduler import start_scheduler, stop_scheduler
+try:
+    from .agent.scheduler import start_scheduler, stop_scheduler
+except ImportError:  # pragma: no cover
+    from backend.agent.scheduler import start_scheduler, stop_scheduler
 
 # Initialize request tracer
 request_tracer = RequestTracer()

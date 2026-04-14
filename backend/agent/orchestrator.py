@@ -532,8 +532,15 @@ class TaskOrchestrator:
             except Exception as e:
                 print(f"[ORCHESTRATOR] Error getting user tasks: {e}")
         
-        # Return from cache
-        return [t.to_dict() for t in self.active_tasks.values() if t.user_id == user_id]
+        # Return from cache (sorted newest-first)
+        items = [t for t in self.active_tasks.values() if t.user_id == user_id]
+        if status:
+            try:
+                items = [t for t in items if t.status.value == status]
+            except Exception:
+                pass
+        items.sort(key=lambda t: getattr(t, "created_at", None) or datetime.min, reverse=True)
+        return [t.to_dict() for t in items]
     
     async def _save_task(self, task: OrchestratedTask):
         """Save task and substeps to database"""

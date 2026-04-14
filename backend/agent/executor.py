@@ -336,31 +336,72 @@ class MeetingExecutor:
         title: str = "Meeting"
     ) -> Dict[str, Any]:
         """Create a meeting link"""
-        
+
+        p = (platform or "jitsi").strip().lower()
+        if p in ("google_meet", "google-meet", "google meet", "meet"):
+            p = "meet"
+        if p in ("zoom meeting", "zoom-call", "zoom call"):
+            p = "zoom"
+
         meeting_id = f"supermanager-{uuid.uuid4().hex[:8]}"
-        
-        if platform == "zoom" and ZOOM_CLIENT_ID:
-            # Try Zoom API
+
+        # Jitsi is the explicit fallback option.
+        if p == "jitsi":
+            return {
+                "success": True,
+                "platform": "jitsi",
+                "meeting_link": f"https://meet.jit.si/{meeting_id}",
+                "meeting_id": meeting_id,
+            }
+
+        # Zoom/Meet must NOT silently fall back to Jitsi when explicitly requested.
+        if p == "meet":
+            return {
+                "success": False,
+                "error": "integration_required",
+                "required_integration": "google_calendar",
+                "platform": "meet",
+                "message": "Google Meet requires Google Calendar integration.",
+            }
+
+        if p == "zoom":
+            if not (ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET and ZOOM_ACCOUNT_ID):
+                return {
+                    "success": False,
+                    "error": "integration_required",
+                    "required_integration": "zoom",
+                    "platform": "zoom",
+                    "message": "Zoom is not configured. Connect Zoom (OAuth) or set Zoom API credentials.",
+                }
+
             try:
                 link = await self._create_zoom_meeting(title)
-                if link:
+                if link and link.get("join_url"):
                     return {
                         "success": True,
                         "platform": "zoom",
                         "meeting_link": link["join_url"],
-                        "meeting_id": link["id"]
+                        "meeting_id": link.get("id") or meeting_id,
                     }
+                return {
+                    "success": False,
+                    "error": "zoom_api_failed",
+                    "platform": "zoom",
+                    "message": "Zoom meeting creation failed.",
+                }
             except Exception as e:
-                print(f"[MEETING] Zoom error: {e}")
-        
-        # Default to Jitsi (always works, no API needed)
-        jitsi_link = f"https://meet.jit.si/{meeting_id}"
-        
+                return {
+                    "success": False,
+                    "error": "zoom_api_failed",
+                    "platform": "zoom",
+                    "message": f"Zoom meeting creation error: {e}",
+                }
+
         return {
-            "success": True,
-            "platform": "jitsi",
-            "meeting_link": jitsi_link,
-            "meeting_id": meeting_id
+            "success": False,
+            "error": "unsupported_platform",
+            "platform": p,
+            "message": f"Unsupported meeting platform: {p}",
         }
     
     async def _create_zoom_meeting(self, title: str) -> Optional[Dict]:

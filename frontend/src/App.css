@@ -449,6 +449,9 @@ body {
   line-height: 1.6;
   font-size: 0.925rem;
   position: relative;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .msg-user {
@@ -485,6 +488,8 @@ body {
 /* AI Message Content - Markdown Styling */
 .msg-ai-content {
   color: var(--text-primary);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .msg-ai-content p { margin-bottom: 8px; }
@@ -546,6 +551,17 @@ body {
   border-collapse: collapse;
   margin: 8px 0;
   width: 100%;
+}
+
+.msg-ai-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.msg-ai-content img {
+  max-width: 100%;
+  height: auto;
 }
 
 .msg-ai-content th, .msg-ai-content td {

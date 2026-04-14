@@ -185,7 +185,7 @@ async def list_integrations(
 
 
 @router.post("/connect")
-async def connect_integration(request: ConnectRequest):
+async def connect_integration(request: ConnectRequest, http_request: Request):
     """
     Initiate integration connection.
     
@@ -220,48 +220,48 @@ async def connect_integration(request: ConnectRequest):
     # Try OAuth flow if available
     if OAUTH_AVAILABLE and get_oauth_manager:
         try:
-            # Map our service names to OAuthService enum values
             oauth_service_map = {
-                "gmail": "gmail",
-                "google_calendar": "gmail",  # Same Google OAuth, different scopes
-                "google_drive": "gmail",
-                "github": "github",
+                "gmail": OAuthService.GMAIL,
+                "google_calendar": OAuthService.GOOGLE_CALENDAR,
+                "google_drive": OAuthService.GOOGLE_DRIVE,
+                "zoom": OAuthService.ZOOM,
             }
-            
-            oauth_service_name = oauth_service_map.get(request.service)
-            if oauth_service_name:
-                oauth_service = OAuthService(oauth_service_name)
+
+            oauth_service = oauth_service_map.get(request.service)
+            if oauth_service:
                 manager = get_oauth_manager()
+
+                base_url = str(http_request.base_url).rstrip('/')
+                redirect_uri = f"{base_url}/api/oauth/callback"
+                if oauth_service == OAuthService.ZOOM:
+                    redirect_uri = f"{base_url}/api/oauth/callback/zoom"
+
                 auth_url, state = manager.get_authorization_url(
                     user_id=request.user_id,
                     service=oauth_service,
                     extra_scopes=request.scopes,
+                    override_redirect_uri=redirect_uri,
                 )
+
                 return {
                     "status": "oauth_required",
                     "message": f"Connect your {store.AVAILABLE_INTEGRATIONS[request.service]['name']} to proceed",
                     "oauth_url": auth_url,
                     "state": state,
                     "service": request.service,
-                    "instructions": "Click the link to authorize access via OAuth"
+                    "instructions": "Click the link to authorize access via OAuth",
                 }
         except Exception as e:
             logger.warning(f"OAuth flow failed for {request.service}: {e}")
-    
-    # Fallback: store as pending (user needs to configure)
-    store.connect_integration(
-        user_id=request.user_id,
-        service=request.service,
-        access_token=None,
-        scopes=request.scopes or store.AVAILABLE_INTEGRATIONS[request.service].get("scopes", []),
-    )
-    
+
+    # Fallback: no OAuth (or not configured). Don't store a tokenless 'connected' record.
     return {
         "status": "pending_setup",
-        "message": f"{request.service} integration registered. OAuth configuration needed.",
+        "message": f"{request.service} integration needs OAuth configuration.",
         "service": request.service,
         "setup_required": True,
-        "fallback": FallbackRouter.get_fallback_route(request.service, False)
+        "setup_url": "/api/oauth/setup-guide",
+        "fallback": FallbackRouter.get_fallback_route(request.service, False),
     }
 
 

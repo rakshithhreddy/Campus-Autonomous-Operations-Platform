@@ -213,7 +213,63 @@ class MeetingBookingFlow(AutomationFlow):
         self.participants = participants
         self.datetime_str = datetime_str
         self.duration = duration_minutes
-        self.meeting_type = meeting_type
+        # Normalize meeting type because older clients may send values like "Zoom" / "Meet".
+        mt = (meeting_type or "jitsi").strip().lower()
+        if mt in ("meet", "google meet", "google_meet", "google-meet", "hangouts", "hangoutsmeet"):
+            mt = "google_meet"
+        elif mt in ("zoom", "zoom meeting", "zoom_meeting", "zoom-call", "zoom call"):
+            mt = "zoom"
+        elif mt in ("jitsi", "jitsi meet", "jitsi_meet"):
+            mt = "jitsi"
+        self.meeting_type = mt
+
+    def _parse_datetime_best_effort(self):
+        """Parse self.datetime_str into an aware UTC datetime.
+
+        Accepts ISO 8601 (preferred) and simple phrases like 'today 2pm' / 'tomorrow 2:30 PM'.
+        """
+        from datetime import datetime, timezone, timedelta
+        import re
+
+        raw = (self.datetime_str or "").strip()
+        if not raw:
+            return datetime.now(timezone.utc)
+
+        # 1) ISO-8601
+        try:
+            cleaned = raw.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(cleaned)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+        except Exception:
+            pass
+
+        lower = raw.lower()
+        base = datetime.now(timezone.utc)
+        day = base.date()
+        if "tomorrow" in lower:
+            day = (base + timedelta(days=1)).date()
+        elif "today" in lower:
+            day = base.date()
+
+        # 2) Time like '2pm', '2:30 pm', '14:00'
+        m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", lower)
+        if not m:
+            return base
+        hour = int(m.group(1))
+        minute = int(m.group(2) or "0")
+        ampm = (m.group(3) or "").lower()
+
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        if ampm == "am" and hour == 12:
+            hour = 0
+        # If no am/pm, assume 24h when hour is 13-23.
+        hour = max(0, min(23, hour))
+        minute = max(0, min(59, minute))
+
+        return datetime(day.year, day.month, day.day, hour, minute, tzinfo=timezone.utc)
     
     def get_steps(self) -> List[FlowStep]:
         return [
@@ -250,6 +306,7 @@ class MeetingBookingFlow(AutomationFlow):
     async def _create_meeting(self, context: Dict) -> Dict[str, Any]:
         """Create the meeting room"""
         import uuid
+        from datetime import datetime, timezone
         
         if self.meeting_type == "jitsi":
             meeting_id = f"supermanager-{uuid.uuid4().hex[:8]}"
@@ -265,57 +322,131 @@ class MeetingBookingFlow(AutomationFlow):
             }
         
         elif self.meeting_type == "zoom":
-            # Try real Zoom API
-            try:
-                from ..core.oauth_manager import get_oauth_manager, OAuthService
-                
-                oauth = get_oauth_manager()
-                token = await oauth.get_valid_token(self.user_id, OAuthService.ZOOM)
-                
-                if token and token.access_token:
-                    import httpx
-                    
-                    async with httpx.AsyncClient() as client:
-                        response = await client.post(
-                            "https://api.zoom.us/v2/users/me/meetings",
-                            headers={
-                                "Authorization": f"Bearer {token.access_token}",
-                                "Content-Type": "application/json",
-                            },
-                            json={
-                                "topic": self.title,
-                                "type": 2,  # Scheduled meeting
-                                "duration": self.duration,
-                                "settings": {
-                                    "join_before_host": True,
-                                    "waiting_room": False,
-                                }
-                            }
-                        )
-                        
-                        if response.status_code == 201:
-                            data = response.json()
-                            return {
-                                "meeting_id": data["id"],
-                                "meeting_url": data["join_url"],
-                                "meeting_type": "zoom",
-                                "title": self.title,
-                                "datetime": self.datetime_str,
-                                "duration_minutes": self.duration,
-                                "start_url": data.get("start_url"),
-                            }
-            except Exception as e:
-                logger.warning(f"Zoom API failed, falling back to Jitsi: {e}")
-            
-            # Fallback to Jitsi
-            meeting_id = f"meeting-{uuid.uuid4().hex[:8]}"
+            # Zoom MUST NOT silently fall back when explicitly requested.
+            # If the user isn't integrated or Zoom API fails, return integration_required
+            # so the UI can prompt to connect.
+            from ..core.oauth_manager import get_oauth_manager, OAuthService
+
+            oauth = get_oauth_manager()
+            token = await oauth.get_valid_token(self.user_id, OAuthService.ZOOM)
+
+            if not token or not getattr(token, "access_token", None):
+                context["required_integration"] = "zoom"
+                raise Exception("integration_required")
+
+            start_dt = self._parse_datetime_best_effort()
+
+            import httpx
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(
+                    "https://api.zoom.us/v2/users/me/meetings",
+                    headers={
+                        "Authorization": f"Bearer {token.access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "topic": self.title,
+                        "type": 2,  # Scheduled meeting
+                        "start_time": start_dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "timezone": "UTC",
+                        "duration": self.duration,
+                        "settings": {
+                            "join_before_host": True,
+                            "waiting_room": False,
+                        },
+                    },
+                )
+
+            if response.status_code != 201:
+                logger.warning(f"Zoom API failed: {response.status_code} {response.text[:200]}")
+                context["required_integration"] = "zoom"
+                context["zoom_status_code"] = response.status_code
+                raise Exception("zoom_api_failed")
+
+            data = response.json()
             return {
-                "meeting_id": meeting_id,
-                "meeting_url": f"https://meet.jit.si/{meeting_id}",
-                "meeting_type": "jitsi",  # Fallback
+                "meeting_id": data.get("id"),
+                "meeting_url": data.get("join_url"),
+                "meeting_type": "zoom",
                 "title": self.title,
+                "datetime": self.datetime_str,
+                "duration_minutes": self.duration,
+                "start_url": data.get("start_url"),
             }
         
+        elif self.meeting_type in ("google_meet", "meet"):
+            # Google Meet via Google Calendar API (requires OAuth token)
+            from ..core.oauth_manager import get_oauth_manager, OAuthService
+
+            oauth = get_oauth_manager()
+            token = await oauth.get_valid_token(self.user_id, OAuthService.GOOGLE_CALENDAR)
+            if not token or not getattr(token, "access_token", None):
+                context["required_integration"] = "google_calendar"
+                raise Exception("integration_required")
+
+            start_dt = self._parse_datetime_best_effort()
+
+            end_dt = start_dt
+            try:
+                from datetime import timedelta
+                end_dt = start_dt + timedelta(minutes=int(self.duration or 30))
+            except Exception:
+                pass
+
+            import httpx
+            request_id = uuid.uuid4().hex
+            body = {
+                "summary": self.title,
+                "start": {"dateTime": start_dt.isoformat(), "timeZone": "UTC"},
+                "end": {"dateTime": end_dt.isoformat(), "timeZone": "UTC"},
+                "attendees": [{"email": e} for e in (self.participants or []) if isinstance(e, str) and "@" in e],
+                "conferenceData": {
+                    "createRequest": {
+                        "requestId": request_id,
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                },
+            }
+
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.post(
+                    "https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1",
+                    headers={
+                        "Authorization": f"Bearer {token.access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+
+            if resp.status_code not in (200, 201):
+                logger.warning(f"Google Calendar API failed: {resp.status_code} {resp.text[:200]}")
+                context["required_integration"] = "google_calendar"
+                context["google_status_code"] = resp.status_code
+                raise Exception("google_meet_api_failed")
+
+            data = resp.json()
+            meeting_url = data.get("hangoutLink")
+            if not meeting_url:
+                # Try conferenceData entry points
+                conf = (data.get("conferenceData") or {})
+                eps = conf.get("entryPoints") or []
+                for ep in eps:
+                    if ep.get("entryPointType") == "video" and ep.get("uri"):
+                        meeting_url = ep.get("uri")
+                        break
+
+            if not meeting_url:
+                raise Exception("google_meet_link_missing")
+
+            return {
+                "meeting_id": data.get("id") or request_id,
+                "meeting_url": meeting_url,
+                "meeting_type": "google_meet",
+                "title": self.title,
+                "datetime": self.datetime_str,
+                "duration_minutes": self.duration,
+            }
+
         else:
             # Default to Jitsi
             meeting_id = f"meeting-{uuid.uuid4().hex[:8]}"

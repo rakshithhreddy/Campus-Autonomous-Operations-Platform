@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Manager API Test - PROOF IT WORKS</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            padding: 40px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .test-box {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #7c3aed;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #6d28d9;
+        }
+        .status {
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 16px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .success {
+            background: #23863622;
+            border: 1px solid #238636;
+            color: #3fb950;
+        }
+        .error {
+            background: #f8514922;
+            border: 1px solid #f85149;
+            color: #f85149;
+        }
+        .loading {
+            background: #1f6feb22;
+            border: 1px solid #1f6feb;
+            color: #58a6ff;
+        }
+        pre {
+            background: #010409;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        h1 { color: #7c3aed; }
+        h2 { color: #8b949e; font-size: 18px; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Super Manager API Connection Test</h1>
+    <p>This page proves the API is working. Click the buttons below to test.</p>
+
+    <div class="test-box">
+        <h2>Test 1: Simple Health Check</h2>
+        <button onclick="testHealth()">Test /api/health</button>
+        <div id="health-status"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 2: Chat API (Code Generation)</h2>
+        <button onclick="testChat()">Send: "Create a hello world function"</button>
+        <div id="chat-status"></div>
+    </div>
+
+    <div class="test-box">
+        <h2>Test 3: Current Configuration</h2>
+        <button onclick="showConfig()">Show Config</button>
+        <div id="config-status"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        async function testHealth() {
+            const statusEl = document.getElementById('health-status');
+            statusEl.innerHTML = '<div class="status loading">⏳ Testing...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/health`);
+                const data = await response.json();
+
+                statusEl.innerHTML = `
+                    <div class="status success">
+                        ✅ SUCCESS! Backend is running!
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                statusEl.innerHTML = `
+                    <div class="status error">
+                        ❌ FAILED: ${error.message}
+                        <br><br>Make sure backend is running: <code>python start.py</code>
+                    </div>
+                `;
+            }
+        }
+
+        async function testChat() {
+            const statusEl = document.getElementById('chat-status');
+            statusEl.innerHTML = '<div class="status loading">⏳ Sending chat message...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: "Create a simple hello world function in Python",
+                        session_id: "test-" + Date.now(),
+                        user_id: "test-user"
+                    })
+                });
+
+                const data = await response.json();
+
+                // Check if code was generated
+                const hasCode = data.steps && data.steps.some(s => s.data && s.data.code);
+
+                statusEl.innerHTML = `
+                    <div class="status success">
+                        ✅ SUCCESS! Chat API responded!
+                        <br><br>
+                        <strong>Response Type:</strong> ${data.type}<br>
+                        <strong>Steps:</strong> ${data.steps ? data.steps.length : 0}<br>
+                        <strong>Code Generated:</strong> ${hasCode ? '✅ YES' : '❌ NO'}<br>
+                        <strong>Message (first 300 chars):</strong><br>
+                        <pre>${data.message.substring(0, 300)}...</pre>
+                        ${hasCode ? `<strong>Generated Code:</strong><pre>${data.steps.find(s => s.data?.code).data.code}</pre>` : ''}
+                    </div>
+                `;
+            } catch (error) {
+                statusEl.innerHTML = `
+                    <div class="status error">
+                        ❌ FAILED: ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function showConfig() {
+            const statusEl = document.getElementById('config-status');
+            statusEl.innerHTML = `
+                <div class="status success">
+                    <strong>Current Configuration:</strong><br><br>
+                    <strong>API Base URL:</strong> ${API_BASE}<br>
+                    <strong>Frontend URL:</strong> ${window.location.origin}<br>
+                    <strong>Page URL:</strong> ${window.location.href}<br>
+                    <br>
+                    <strong>CORS should allow:</strong> http://localhost:3003<br>
+                    <strong>Backend should be at:</strong> http://localhost:8000<br>
+                </div>
+            `;
+        }
+
+        // Auto-run health check on page load
+        window.addEventListener('load', () => {
+            console.log('🚀 API Test Page Loaded');
+            console.log('Backend API:', API_BASE);
+        });
+    </script>
+</body>
+</html>

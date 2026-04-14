@@ -133,7 +133,44 @@ class AdaptiveAgent:
         self.use_openrouter = bool(self.openrouter_key) and not self.use_openai
         logger.info(f"[AdaptiveAgent] Initialized - use_openai: {self.use_openai}, use_openrouter: {self.use_openrouter}")
 
-    def _build_system_prompt(self, feedback_context: str = "", strategy_hint: str = "") -> str:
+    def _extract_existing_code_from_history(self, history: List[Dict[str, str]]) -> Optional[str]:
+        """Extract existing code artifacts from conversation history for iterative modifications"""
+        # Look for previously generated code in reverse order (most recent first)
+        for msg in reversed(history):
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                # Look for code blocks with filepath markers
+                import re
+                code_blocks = re.findall(r'```(\w+)?\n([\s\S]*?)```', content)
+                if code_blocks:
+                    # Build a context string showing existing files
+                    files = {}
+                    for lang, code in code_blocks:
+                        # Check for filepath marker
+                        filepath_match = re.match(r'^(?://|#|<!--)\s*filepath\s*:\s*([^\s>]+)', code.strip())
+                        if filepath_match:
+                            filename = filepath_match.group(1).strip()
+                            code_content = re.sub(r'^(?://|#|<!--)\s*filepath\s*:[^\n]+\n', '', code.strip(), count=1)
+                            files[filename] = code_content
+                        elif lang:
+                            # Smart mapping
+                            if lang.lower() == 'html' and 'index.html' not in files:
+                                files['index.html'] = code.strip()
+                            elif lang.lower() == 'css' and 'style.css' not in files:
+                                files['style.css'] = code.strip()
+                            elif lang.lower() in ('js', 'javascript') and 'script.js' not in files:
+                                files['script.js'] = code.strip()
+
+                    if files:
+                        # Format as context
+                        context_parts = ["EXISTING CODE IN THIS CONVERSATION:"]
+                        for filename, code in files.items():
+                            context_parts.append(f"\n// Current file: {filename}")
+                            context_parts.append(code[:500] + ("..." if len(code) > 500 else ""))
+                        return "\n".join(context_parts)
+        return None
+
+    def _build_system_prompt(self, feedback_context: str = "", strategy_hint: str = "", existing_code: str = "") -> str:
         """Build the system prompt with dynamic tools documentation"""
         registry = get_tool_registry()
         primitives_section = registry.get_prompt_section()
@@ -220,6 +257,15 @@ print("\\n---\\n".join(all_info))
 }}
 </ask>
 
+CRITICAL RULE FOR OPTIONS:
+- NEVER ask "which one?" or "which would you prefer?" without FIRST presenting the options!
+- If you need user to choose, YOU MUST use <ask> format with full options array
+- EVERY choice question MUST include clear labeled options with descriptions
+- WRONG: <answer>Which one do you want?</answer>
+- RIGHT: <ask>{{"message": "Which option?", "options": [{{"label": "A", "value": "a", "description": "..."}}, ...]}}</ask>
+- For build/create tasks where the user goal is clear (e.g. "build an ecommerce website"), DO NOT block progress by asking for a choice.
+- If multiple valid approaches exist, pick the most reasonable default and proceed; only ask if a missing detail truly changes the outcome.
+
 4. FINAL ANSWER - When you have the complete response:
 <think>Summary of what you did</think>
 <answer>Your complete, detailed response to the user with all relevant information</answer>
@@ -234,7 +280,7 @@ IMPORTANT RULES:
 - NEVER fabricate URLs, prices, or data. ALWAYS search/scrape for real information.
 - Previous step results are available in the `context` dict variable.
 - If a step fails, analyze the error and try an ALTERNATIVE approach. NEVER GIVE UP.
-- For complex tasks: Search first -> Scrape details -> Present options -> Act on selection.
+- For complex tasks: Search first -> Scrape details -> (Present options only when needed) -> Execute.
 - When presenting options with <ask>, include labels, descriptions, and URLs when available.
 - Maximum {self.max_steps} steps per request. Be efficient.
 - SIMPLE QUESTIONS: For basic math (2+2=4), general knowledge (capital of France), or conversational questions, use <answer> directly. DON'T use tools for these!
@@ -247,6 +293,83 @@ EXECUTION MINDSET:
 - NEVER respond with "Here's how you can..." - JUST DO IT
 - If you need login credentials, ASK for them. Don't assume you can't do something
 - If a website blocks you, try a different website. There's always an alternative
+
+CODE GENERATION RULES (CRITICAL - FOLLOW EXACTLY):
+When user asks to build/create/make an app, website, landing page, or any code:
+
+1. OUTPUT REAL, COMPLETE CODE - no placeholders, no TODOs, no "add your code here"
+2. For web apps, ALWAYS generate these THREE files with proper markers:
+
+```html
+// filepath: index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Name</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Real HTML content here -->
+</body>
+<script src="script.js"></script>
+</html>
+```
+
+```css
+// filepath: style.css
+/* Complete professional CSS styling */
+body {{
+    font-family: system-ui, sans-serif;
+    margin: 0;
+    /* more real styles */
+}}
+```
+
+```javascript
+// filepath: script.js
+// Complete working JavaScript
+document.addEventListener('DOMContentLoaded', () => {{
+    // Real functionality here
+}});
+```
+
+3. The "// filepath: filename.ext" MUST be the FIRST LINE inside each code block
+4. Generate PROFESSIONAL, BEAUTIFUL designs - use gradients, shadows, animations
+5. Make the code COMPLETE and RUNNABLE - a user should be able to copy and run it
+6. For modifications: KEEP existing functionality but UPDATE as requested
+7. For backend code: Include proper error handling, validation, comments
+
+{existing_code}
+
+ITERATIVE MODIFICATION RULES (WHEN CODE ALREADY EXISTS):
+When user asks to "change", "modify", "update", "add feature to", or "fix" existing code:
+1. PRESERVE all existing functionality - don't delete working features
+2. APPLY ONLY the specific changes requested
+3. MAINTAIN the existing file structure (same filenames)
+4. KEEP the same design style and patterns
+5. OUTPUT the COMPLETE files with modifications, not just the changed parts
+
+Example - User says "change button color to blue":
+WRONG: Generate only index.html
+RIGHT: Generate index.html, style.css, script.js with ONLY the button color changed
+
+Example - User says "add a dark mode toggle":
+RIGHT: Keep all existing features + add dark mode functionality
+
+WRONG (Never do this):
+```html
+// TODO:add content here
+```
+
+RIGHT (Always do this):
+```html
+// filepath: index.html
+<!DOCTYPE html>
+<html>... complete working code ...
+```
+
 {strategy_section}
 TASK EXECUTION FLOW:
 1. UNDERSTAND: Parse what the user wants done
@@ -341,6 +464,11 @@ WHEN CHALLENGED OR CORRECTED:
         # Check for cached strategy
         strategy_hint = self.strategies.get_strategy_hint(user_message)
 
+        # Extract existing code from history for iterative modifications
+        existing_code = self._extract_existing_code_from_history(history) or ""
+        if existing_code:
+            logger.info(f"[AdaptiveAgent] Found existing code in history - enabling iterative mode")
+
         # Include task classification in system prompt for better routing
         classification_context = f"""
 TASK CLASSIFICATION (pre-analyzed):
@@ -350,8 +478,8 @@ TASK CLASSIFICATION (pre-analyzed):
 - Suggested Tools: {', '.join(suggested_tools) if suggested_tools else 'auto'}
 Use this classification to guide your approach.
 """
-        
-        system_prompt = self._build_system_prompt(feedback_context + classification_context, strategy_hint)
+
+        system_prompt = self._build_system_prompt(feedback_context + classification_context, strategy_hint, existing_code)
         messages = [{"role": "system", "content": system_prompt}]
         messages.extend(history)
         messages.append({"role": "user", "content": user_message})

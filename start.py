@@ -15,8 +15,9 @@ def main():
         print("Backend imported successfully", flush=True)
         
         # Get port
+        # Default to 8000 for local dev; hosting providers will set PORT.
         import os
-        port = int(os.environ.get("PORT", 10000))
+        port = int(os.environ.get("PORT", 8000))
         print(f"Starting on port {port}", flush=True)
         
         # Run server

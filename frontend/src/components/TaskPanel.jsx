@@ -21,12 +21,13 @@ import './TaskPanel.css'
  * - Real-time updates via polling (WebSocket can be added)
  * - Notifications
  */
-export default function TaskPanel({ userId, refreshTrigger = 0 }) {
+export default function TaskPanel({ userId, refreshTrigger = 0, onIterate }) {
   const [tasks, setTasks] = useState([])
   const [notifications, setNotifications] = useState([])
   const [selectedTask, setSelectedTask] = useState(null)
   const [loading, setLoading] = useState(false)
   const [lastUpdate, setLastUpdate] = useState(null)
+  const [iterateTextByTaskId, setIterateTextByTaskId] = useState({})
 
   // Fetch tasks
   const fetchTasks = useCallback(async () => {
@@ -82,7 +83,7 @@ export default function TaskPanel({ userId, refreshTrigger = 0 }) {
   // Mark notification as read
   const dismissNotification = async (notificationId) => {
     try {
-      await fetch(`${API}/api/v2/tasks/notifications/${notificationId}/read`, {
+      await fetch(apiUrl(`/api/v2/tasks/notifications/${notificationId}/read`), {
         method: 'PUT'
       })
       setNotifications(prev => prev.filter(n => n.id !== notificationId))
@@ -120,6 +121,18 @@ export default function TaskPanel({ userId, refreshTrigger = 0 }) {
     if (!isoString) return ''
     const date = new Date(isoString)
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const handleIterate = async (task) => {
+    const text = (iterateTextByTaskId[task?.id] || '').trim()
+    if (!text) return
+    try {
+      if (typeof onIterate === 'function') {
+        await onIterate(task, text)
+      }
+    } finally {
+      setIterateTextByTaskId(prev => ({ ...prev, [task.id]: '' }))
+    }
   }
 
   return (
@@ -184,7 +197,7 @@ export default function TaskPanel({ userId, refreshTrigger = 0 }) {
                 {getStatusIcon(task.status)}
                 <div className="task-info">
                   <h3>{task.title}</h3>
-                  <span className="task-type">{task.task_type}</span>
+                  <span className="task-type">{task.task_type}{task.created_at ? ` • ${formatTime(task.created_at)}` : ''}</span>
                 </div>
                 <ChevronRight 
                   className={`expand-icon ${selectedTask?.id === task.id ? 'expanded' : ''}`} 
@@ -242,6 +255,28 @@ export default function TaskPanel({ userId, refreshTrigger = 0 }) {
                       <span className="substep-weight">{step.progress_weight}%</span>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Iterate on this task */}
+              {selectedTask?.id === task.id && (
+                <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '6px' }}>Iterate</div>
+                  <textarea
+                    value={iterateTextByTaskId[task.id] || ''}
+                    onChange={(e) => setIterateTextByTaskId(prev => ({ ...prev, [task.id]: e.target.value }))}
+                    rows={2}
+                    placeholder="Add more instructions for this task..."
+                    style={{ width: '100%', resize: 'none', padding: '8px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)', color: '#e6edf3', fontSize: '12px' }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleIterate(task); }}
+                    style={{ marginTop: '8px', width: '100%', padding: '8px 10px', borderRadius: '10px', border: '1px solid rgba(124,58,237,0.55)', background: 'rgba(124,58,237,0.22)', color: '#e6edf3', cursor: 'pointer', fontSize: '12px' }}
+                    title={typeof onIterate === 'function' ? 'Send follow-up for this task' : 'Iteration handler not wired'}
+                  >
+                    Send
+                  </button>
                 </div>
               )}
 

@@ -137,6 +137,7 @@ function App() {
       const data = await res.json()
       setSessionId(data.session_id)
       setMessages(prev => [...prev, { role: 'ai', text: data.message, type: data.type, status: data.status, need: data.need, ui_components: data.ui_components, proof: data.proof, result: data.result, steps: data.steps, options: data.options, timestamp: new Date(), responseTime: data.response_time_ms }])
+      if (data.task_id) setTaskRefreshTrigger(prev => prev + 1)
       const needsIntegration = Array.isArray(data.steps) && data.steps.some(s => {
         const d = s?.data || {}
         return d.requires_connection || d.required_integration || (d._meta && d._meta.error === 'integration_required')
@@ -181,6 +182,7 @@ function App() {
       AgentSteps={AgentSteps}
       UIComponentRenderer={UIComponentRenderer}
       sessionId={sessionId}
+      userId={userId}
       // Settings, Integrations, TaskPanel props
       showSettings={showSettings}
       setShowSettings={setShowSettings}
@@ -190,7 +192,13 @@ function App() {
       setShowTaskPanel={setShowTaskPanel}
       SettingsPanel={AISettings}
       IntegrationsPanel={IntegrationsHub}
-      TaskPanelComponent={() => <TaskPanel refreshTrigger={taskRefreshTrigger} />}
+      TaskPanelComponent={() => (
+        <TaskPanel
+          userId={userId}
+          refreshTrigger={taskRefreshTrigger}
+          onIterate={(task, text) => send(`/${task?.id} ${text}`)}
+        />
+      )}
     />
   )
 }

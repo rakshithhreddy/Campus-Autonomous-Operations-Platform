@@ -83,8 +83,8 @@ class OAuthConfig:
         )
     
     @classmethod
-    def google_full(cls) -> 'OAuthConfig':
-        """Full Google OAuth (Gmail + Calendar + Drive)"""
+    def google_calendar(cls) -> 'OAuthConfig':
+        """Google Calendar OAuth configuration"""
         return cls(
             service=OAuthService.GOOGLE_CALENDAR,
             client_id=os.getenv("GMAIL_CLIENT_ID", ""),
@@ -92,10 +92,22 @@ class OAuthConfig:
             auth_url="https://accounts.google.com/o/oauth2/v2/auth",
             token_url="https://oauth2.googleapis.com/token",
             scopes=[
-                "https://www.googleapis.com/auth/gmail.send",
-                "https://www.googleapis.com/auth/gmail.readonly",
                 "https://www.googleapis.com/auth/calendar",
                 "https://www.googleapis.com/auth/calendar.events",
+            ],
+            redirect_uri=os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/api/oauth/callback"),
+        )
+
+    @classmethod
+    def google_drive(cls) -> 'OAuthConfig':
+        """Google Drive OAuth configuration"""
+        return cls(
+            service=OAuthService.GOOGLE_DRIVE,
+            client_id=os.getenv("GMAIL_CLIENT_ID", ""),
+            client_secret=os.getenv("GMAIL_CLIENT_SECRET", ""),
+            auth_url="https://accounts.google.com/o/oauth2/v2/auth",
+            token_url="https://oauth2.googleapis.com/token",
+            scopes=[
                 "https://www.googleapis.com/auth/drive.file",
             ],
             redirect_uri=os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/api/oauth/callback"),
@@ -111,7 +123,7 @@ class OAuthConfig:
             auth_url="https://zoom.us/oauth/authorize",
             token_url="https://zoom.us/oauth/token",
             scopes=["meeting:write", "user:read"],
-            redirect_uri=os.getenv("ZOOM_REDIRECT_URI", "http://localhost:8000/api/oauth/zoom/callback"),
+            redirect_uri=os.getenv("ZOOM_REDIRECT_URI", "http://localhost:8000/api/oauth/callback/zoom"),
         )
 
 
@@ -125,6 +137,7 @@ class OAuthToken:
     scopes: List[str] = field(default_factory=list)
     service: str = ""
     user_email: str = ""
+    user_id: str = ""
     
     @property
     def is_expired(self) -> bool:
@@ -207,8 +220,8 @@ class OAuthManager:
         """Get OAuth configuration for a service"""
         configs = {
             OAuthService.GMAIL: OAuthConfig.gmail,
-            OAuthService.GOOGLE_CALENDAR: OAuthConfig.google_full,
-            OAuthService.GOOGLE_DRIVE: OAuthConfig.google_full,
+            OAuthService.GOOGLE_CALENDAR: OAuthConfig.google_calendar,
+            OAuthService.GOOGLE_DRIVE: OAuthConfig.google_drive,
             OAuthService.ZOOM: OAuthConfig.zoom,
         }
         
@@ -238,10 +251,34 @@ class OAuthManager:
             Tuple of (authorization_url, state)
         """
         config = self.get_config(service)
+
+        missing: List[str] = []
+        if service in [OAuthService.GMAIL, OAuthService.GOOGLE_CALENDAR, OAuthService.GOOGLE_DRIVE]:
+            if not config.client_id:
+                missing.append("GMAIL_CLIENT_ID")
+            if not config.client_secret:
+                missing.append("GMAIL_CLIENT_SECRET")
+        elif service == OAuthService.ZOOM:
+            if not config.client_id:
+                missing.append("ZOOM_CLIENT_ID")
+            if not config.client_secret:
+                missing.append("ZOOM_CLIENT_SECRET")
+        else:
+            if not config.client_id:
+                missing.append(f"{service.value.upper()}_CLIENT_ID")
+            if not config.client_secret:
+                missing.append(f"{service.value.upper()}_CLIENT_SECRET")
+        if missing:
+            raise ValueError(
+                f"OAuth is not configured for {service.value}. Missing: {', '.join(missing)}"
+            )
         
         # Generate secure state
         state = secrets.token_urlsafe(32)
         
+        # Determine redirect URI dynamically if possible
+        redirect_uri = override_redirect_uri or config.redirect_uri
+
         # Store state mapping
         self._pending_states[state] = {
             "user_id": user_id,
@@ -255,9 +292,6 @@ class OAuthManager:
         if extra_scopes:
             scopes.extend(extra_scopes)
             
-        # Determine redirect URI dynamically if possible
-        redirect_uri = override_redirect_uri or config.redirect_uri
-        
         # Build authorization URL
         params = {
             "client_id": config.client_id,
@@ -333,6 +367,7 @@ class OAuthManager:
                     scopes=data.get("scope", "").split(" "),
                     service=service.value,
                 )
+                token.user_id = user_id
                 
                 # Get user email (for Google)
                 if service in [OAuthService.GMAIL, OAuthService.GOOGLE_CALENDAR]:

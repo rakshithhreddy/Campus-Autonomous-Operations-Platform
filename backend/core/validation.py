@@ -435,5 +435,6 @@ class RateLimitTracker:
 
 
 # Singleton instances for different rate limits
-chat_rate_limiter = RateLimitTracker(max_requests=30, window_seconds=60)  # 30 msgs/min
-api_rate_limiter = RateLimitTracker(max_requests=100, window_seconds=60)  # 100 requests/min
+# NOTE: The UI polls tasks/notifications and users may rapidly iterate. Keep limits dev-friendly.
+chat_rate_limiter = RateLimitTracker(max_requests=300, window_seconds=60)  # 300 msgs/min
+api_rate_limiter = RateLimitTracker(max_requests=1000, window_seconds=60)  # 1000 requests/min

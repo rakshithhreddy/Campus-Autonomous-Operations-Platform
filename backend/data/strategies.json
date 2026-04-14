@@ -206,9 +206,9 @@
   {
     "task_type": "create_ecommerce_website",
     "keywords": [
-      "create",
+      "website",
       "ecommerce",
-      "website"
+      "create"
     ],
     "steps": [
       {
@@ -236,12 +236,12 @@
         }
       }
     ],
-    "success_count": 1,
+    "success_count": 2,
     "failure_count": 0,
-    "confidence": 0.5,
+    "confidence": 0.52,
     "positive_feedback": 0,
     "negative_feedback": 0,
-    "last_used": "2026-03-23T06:46:21.264532",
+    "last_used": "2026-03-23T13:44:23.317037",
     "last_feedback": "",
     "created": "2026-03-23T06:46:21.264542"
   },

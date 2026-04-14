@@ -173,6 +173,21 @@ async def oauth_callback(
         token = await manager.exchange_code(state, code)
         
         if token:
+            # Persist the connection into the Integrations store so the UI can reflect it
+            try:
+                from ..core.integration_manager.integration_store import integration_store
+
+                integration_store.connect_integration(
+                    user_id=token.user_id or "default",
+                    service=token.service,
+                    access_token=token.access_token,
+                    refresh_token=token.refresh_token,
+                    scopes=token.scopes,
+                    expires_at=token.expires_at.isoformat() if token.expires_at else None,
+                )
+            except Exception as e:
+                logger.warning(f"OAuth token stored but integration registry update failed: {e}")
+
             return HTMLResponse(content=_success_html(
                 service=token.service,
                 email=token.user_email,
@@ -284,20 +299,22 @@ async def revoke_oauth_token(
 
 
 @router.get("/setup-guide")
-async def oauth_setup_guide():
+async def oauth_setup_guide(request: Request):
     """
     OAuth setup guide - shows instructions for configuring OAuth.
     Visit this in a browser for step-by-step guidance.
     """
-    return HTMLResponse(content=_setup_guide_html())
+    base_url = str(request.base_url).rstrip('/')
+    return HTMLResponse(content=_setup_guide_html(base_url=base_url))
 
 
 # =============================================================================
 # HTML Templates
 # =============================================================================
 
-def _setup_guide_html() -> str:
+def _setup_guide_html(base_url: str) -> str:
     """Generate setup guide HTML"""
+    redirect_uri = f"{base_url}/api/oauth/callback"
     return """
 <!DOCTYPE html>
 <html>
@@ -381,18 +398,32 @@ def _setup_guide_html() -> str:
         <span class="step-number">1</span>
         <strong>Add Redirect URI to Google Cloud Console</strong>
         <p>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a> and add this redirect URI to your OAuth 2.0 Client:</p>
-        <pre>http://localhost:10000/api/oauth/callback</pre>
+        <pre>""" + redirect_uri + """</pre>
+    </div>
+
+    <div class="step">
+        <span class="step-number">2</span>
+        <strong>Fix “Access blocked / app not verified” (403 access_denied)</strong>
+        <p>If Google shows <em>“Access blocked… has not completed the Google verification process”</em>, your OAuth Consent Screen is in <strong>Testing</strong> and your account isn’t an approved tester.</p>
+        <ol>
+            <li>Open <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank">OAuth Consent Screen</a></li>
+            <li>Go to <strong>Test users</strong> and add the exact Gmail you’re signing in with</li>
+            <li>Alternatively click <strong>Publish App</strong> (verification may be required depending on scopes)</li>
+        </ol>
+        <div class="warning">
+            <strong>Note</strong>: Gmail scopes (send/read) are considered sensitive/restricted. For local/dev, adding yourself as a <strong>Test user</strong> is the fastest path.
+        </div>
     </div>
     
     <div class="step">
-        <span class="step-number">2</span>
+        <span class="step-number">3</span>
         <strong>Authorize Gmail</strong>
         <p>Click the button below to authorize Super Manager to send emails on your behalf:</p>
         <a href="/api/oauth/authorize/gmail?user_id=default" class="btn">🔗 Authorize Gmail</a>
     </div>
     
     <div class="step">
-        <span class="step-number">3</span>
+        <span class="step-number">4</span>
         <strong>Test Email</strong>
         <p>After authorization, test sending an email:</p>
         <pre>POST /api/automation/quick/email?user_id=default&to=you@example.com&subject=Test&body=Hello</pre>

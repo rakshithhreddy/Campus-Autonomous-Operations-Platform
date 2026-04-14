@@ -147,10 +147,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 @dataclass
 class IPRateLimitConfig:
     """Configuration for IP-based rate limiting"""
-    requests_per_minute: int = 60
-    requests_per_hour: int = 1000
-    block_duration_minutes: int = 15
+    # Defaults are tuned for local/dev usage so the UI polling + reloads
+    # don't accidentally lock you out for long periods.
+    requests_per_minute: int = 300
+    requests_per_hour: int = 5000
+    block_duration_minutes: int = 1
     whitelist: Set[str] = field(default_factory=set)
+
+    def __post_init__(self):
+        # Always allow local loopback.
+        self.whitelist.update({"127.0.0.1", "::1"})
 
 
 class IPRateLimiter:
@@ -293,17 +299,32 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         
         client_ip = self._get_client_ip(request)
+
+        # Never rate limit loopback; this avoids "IP blocked" during development.
+        if client_ip in {"127.0.0.1", "::1"}:
+            return await call_next(request)
+
         allowed, reason = self.rate_limiter.check_and_record(client_ip)
         
         if not allowed:
+            retry_after = 60
+            # If the limiter gave a countdown, surface it.
+            if isinstance(reason, str) and "IP blocked for" in reason:
+                try:
+                    import re
+                    m = re.search(r"IP blocked for (\d+)", reason)
+                    if m:
+                        retry_after = int(m.group(1))
+                except Exception:
+                    pass
             return JSONResponse(
                 status_code=429,
                 content={
                     "error": "Too Many Requests",
                     "message": reason,
-                    "retry_after": 60
+                    "retry_after": retry_after
                 },
-                headers={"Retry-After": "60"}
+                headers={"Retry-After": str(retry_after)}
             )
         
         return await call_next(request)

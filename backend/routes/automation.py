@@ -361,6 +361,7 @@ async def quick_meeting(
     title: str,
     participants: str,  # Comma-separated emails
     when: str = "now",
+    meeting_type: str = "jitsi",
 ):
     """
     Quick meeting creation with minimal parameters.
@@ -375,6 +376,44 @@ async def quick_meeting(
         raise HTTPException(status_code=503, detail="Automation not available")
     
     participant_list = [p.strip() for p in participants.split(",") if p.strip()]
+    meeting_type = (meeting_type or "jitsi").strip().lower()
+    if meeting_type in ("meet", "google meet", "google_meet", "google-meet"):
+        meeting_type = "google_meet"
+    if meeting_type in ("zoom meeting", "zoom call"):
+        meeting_type = "zoom"
+
+    # Create a lightweight orchestrator task so the Task Panel can show progress
+    # even when Supabase isn't configured (in-memory fallback).
+    task_id = None
+    try:
+        from ..agent.orchestrator import get_orchestrator, TaskStatus
+        from datetime import datetime
+
+        orchestrator = get_orchestrator()
+        meeting_start_time = None
+        try:
+            cleaned = (when or "").replace("Z", "+00:00")
+            meeting_start_time = datetime.fromisoformat(cleaned) if cleaned else None
+        except Exception:
+            meeting_start_time = None
+
+        task = await orchestrator.create_task(
+            user_id=user_id,
+            task_type="schedule_meeting",
+            params={
+                "title": title,
+                "participants": participant_list,
+                "when": when,
+                "meeting_type": meeting_type,
+            },
+            meeting_start_time=meeting_start_time,
+        )
+        task_id = task.id
+        # Mark as in progress until we know outcome
+        task.status = TaskStatus.IN_PROGRESS
+        task.progress_percent = 10
+    except Exception:
+        task_id = None
     
     result = await run_automation_flow(
         flow_name="meeting_booking",
@@ -383,22 +422,68 @@ async def quick_meeting(
             "title": title,
             "participants": participant_list,
             "datetime": when,
-            "meeting_type": "jitsi",
+            "meeting_type": meeting_type,
         }
     )
     
     if result.success:
+        try:
+            if task_id:
+                from ..agent.orchestrator import get_orchestrator, TaskStatus
+                orchestrator = get_orchestrator()
+                task = await orchestrator.get_task(task_id)
+                if task:
+                    task.status = TaskStatus.COMPLETED
+                    task.progress_percent = 100
+                    task.metadata["meeting_url"] = result.data.get("meeting_url")
+        except Exception:
+            pass
         return {
             "status": "success",
             "meeting_url": result.data.get("meeting_url"),
             "title": title,
             "invitations_sent": result.data.get("total_sent", 0),
+            "task_id": task_id,
         }
     else:
+        # Surface integration gating explicitly (no silent fallback)
+        if result.error == "integration_required":
+            try:
+                if task_id:
+                    from ..agent.orchestrator import get_orchestrator, TaskStatus
+                    orchestrator = get_orchestrator()
+                    task = await orchestrator.get_task(task_id)
+                    if task:
+                        task.status = TaskStatus.WAITING_INPUT
+                        task.progress_percent = 25
+                        task.needs_user_input = True
+                        task.input_prompt = "Connect the required integration to continue."
+                        task.metadata["required_integration"] = result.data.get("required_integration") or meeting_type
+            except Exception:
+                pass
+            return {
+                "status": "integration_required",
+                "required_integration": result.data.get("required_integration") or meeting_type,
+                "message": "Integration required to create this meeting type.",
+                "task_id": task_id,
+            }
+        try:
+            if task_id:
+                from ..agent.orchestrator import get_orchestrator, TaskStatus
+                orchestrator = get_orchestrator()
+                task = await orchestrator.get_task(task_id)
+                if task:
+                    task.status = TaskStatus.FAILED
+                    task.progress_percent = 0
+                    task.metadata["error"] = result.error
+                    task.metadata["message"] = result.message
+        except Exception:
+            pass
         return {
             "status": "failed",
             "error": result.error,
             "message": result.message,
+            "task_id": task_id,
         }
 
 

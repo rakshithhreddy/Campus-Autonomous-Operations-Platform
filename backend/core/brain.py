@@ -208,7 +208,13 @@ class AIBrain:
             lines.append(f"- {key}: {value}")
         return "\n".join(lines)
 
-    async def process(self, session_id: str, user_message: str, user_id: str = "default") -> Dict[str, Any]:
+    async def process(
+        self,
+        session_id: str,
+        user_message: str,
+        user_id: str = "default",
+        parent_task_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Process a user message. Non-streaming version.
         Collects all agent events and returns final result.
@@ -263,6 +269,7 @@ class AIBrain:
                 session_id=session_id,
                 user_message=user_message,
                 steps=steps,
+                parent_task_id=parent_task_id,
             )
         except Exception as e:
             logger.warning(f"[BRAIN] Task bridge failed: {e}")
@@ -319,61 +326,176 @@ class AIBrain:
         session_id: str,
         user_message: str,
         steps: List[Dict[str, Any]],
+        parent_task_id: Optional[str] = None,
     ) -> Optional[str]:
         """Create a single orchestrator task representing the agent's executed actions."""
-        from backend.agent.orchestrator import (
-            get_orchestrator,
-            OrchestratedTask,
-            Substep,
-            TaskStatus,
-            SubstepStatus,
-            DetectionType,
-        )
+        # Support both package and module import styles.
+        try:
+            from ..agent.orchestrator import (
+                get_orchestrator,
+                OrchestratedTask,
+                Substep,
+                TaskStatus,
+                SubstepStatus,
+                DetectionType,
+            )
+        except Exception:  # pragma: no cover
+            from backend.agent.orchestrator import (
+                get_orchestrator,
+                OrchestratedTask,
+                Substep,
+                TaskStatus,
+                SubstepStatus,
+                DetectionType,
+            )
 
+        # Even if the agent emitted no events, still record the chat turn so the UI can show a task.
         if not steps:
-            return None
+            steps = [{"type": "answer", "content": ""}]
 
         action_results: List[Dict[str, Any]] = [s for s in steps if s.get("type") == "action_result"]
-        if not action_results:
-            return None
+        needs_input_steps: List[Dict[str, Any]] = [
+            s for s in steps if s.get("type") in ("ask", "confirm_needed", "integration_needed")
+        ]
+        error_steps: List[Dict[str, Any]] = [s for s in steps if s.get("type") == "error"]
+
+        needs_user_input = bool(needs_input_steps)
+        input_prompt = None
+        if needs_user_input:
+            # Use the most recent ask/confirm content as a prompt.
+            input_prompt = (needs_input_steps[-1].get("content") or "Your input is needed").strip()[:200]
 
         substeps: List[Substep] = []
         any_failed = False
 
-        for idx, step in enumerate(action_results, start=1):
-            data = step.get("data") or {}
-            meta = data.get("_meta") or {}
-            primitive = meta.get("primitive") or "unknown"
-            success = bool(meta.get("success", True))
-            err = meta.get("error")
+        if action_results:
+            for idx, step in enumerate(action_results, start=1):
+                data = step.get("data") or {}
+                meta = data.get("_meta") or {}
+                primitive = meta.get("primitive") or "unknown"
+                success = bool(meta.get("success", True))
+                err = meta.get("error")
 
-            if not success:
-                any_failed = True
+                if not success:
+                    any_failed = True
 
+                substeps.append(
+                    Substep(
+                        id=str(uuid.uuid4()),
+                        step_number=idx,
+                        title=f"{primitive}",
+                        description=(step.get("content") or "")[:200],
+                        status=SubstepStatus.COMPLETED if success else SubstepStatus.FAILED,
+                        progress_weight=10,
+                        action_type=primitive,
+                        action_params=meta.get("params") or {},
+                        result={
+                            "output": step.get("content"),
+                            "data": {k: v for k, v in data.items() if k != "_meta"},
+                            "error": err,
+                        },
+                        error_message=str(err) if err else "",
+                        detection_type=DetectionType.IMMEDIATE,
+                    )
+                )
+        else:
+            # No tool actions occurred (common for code generation / Q&A).
+            # Still record the chat turn so the Tasks panel updates.
+            any_failed = bool(error_steps)
             substeps.append(
                 Substep(
                     id=str(uuid.uuid4()),
-                    step_number=idx,
-                    title=f"{primitive}",
-                    description=(step.get("content") or "")[:200],
-                    status=SubstepStatus.COMPLETED if success else SubstepStatus.FAILED,
-                    progress_weight=10,
-                    action_type=primitive,
-                    action_params=meta.get("params") or {},
+                    step_number=1,
+                    title="generate_response",
+                    description="Generated a response",
+                    status=SubstepStatus.COMPLETED if not any_failed else SubstepStatus.FAILED,
+                    progress_weight=100,
+                    action_type="generate_response",
+                    action_params={},
                     result={
-                        "output": step.get("content"),
-                        "data": {k: v for k, v in data.items() if k != "_meta"},
-                        "error": err,
+                        "events": [
+                            {
+                                "type": (s.get("type") or ""),
+                                "content": (s.get("content") or "")[:200],
+                            }
+                            for s in steps
+                            if isinstance(s, dict) and (s.get("type") in ("thinking", "code_exec", "answer", "ask", "confirm_needed", "integration_needed", "error"))
+                        ]
                     },
-                    error_message=str(err) if err else "",
+                    error_message=(error_steps[-1].get("content") if error_steps else ""),
                     detection_type=DetectionType.IMMEDIATE,
                 )
             )
+
+        orchestrator = get_orchestrator()
+
+        # If this chat turn is explicitly continuing an existing task, append new substeps
+        # to that task and keep the same task_id.
+        if parent_task_id:
+            try:
+                existing = await orchestrator.get_task(parent_task_id)
+            except Exception:
+                existing = None
+
+            if existing and getattr(existing, "user_id", None) == user_id:
+                next_step_number = 1
+                try:
+                    next_step_number = (max((s.step_number for s in existing.substeps), default=0) + 1)
+                except Exception:
+                    next_step_number = len(existing.substeps) + 1
+
+                # Renumber new substeps so they append cleanly.
+                for offset, s in enumerate(substeps):
+                    s.step_number = next_step_number + offset
+                    existing.substeps.append(s)
+
+                # Update status/progress and metadata.
+                existing.needs_user_input = needs_user_input
+                existing.input_prompt = (input_prompt or "")
+                if any_failed:
+                    existing.status = TaskStatus.FAILED
+                elif needs_user_input:
+                    existing.status = TaskStatus.WAITING_INPUT
+                else:
+                    existing.status = TaskStatus.COMPLETED
+
+                try:
+                    existing.progress_percent = existing.calculate_progress()
+                except Exception:
+                    existing.progress_percent = 100 if not needs_user_input else 50
+
+                try:
+                    existing.metadata = existing.metadata or {}
+                    existing.metadata["session_id"] = existing.metadata.get("session_id") or session_id
+                    existing.metadata["last_iteration_at"] = datetime.now().isoformat()
+                    existing.metadata["iteration_count"] = int(existing.metadata.get("iteration_count") or 0) + 1
+                    existing.metadata["last_message"] = user_message
+                except Exception:
+                    pass
+
+                orchestrator.active_tasks[parent_task_id] = existing
+                try:
+                    await orchestrator._save_task(existing)
+                    await orchestrator._notify_task_update(existing)
+                except Exception:
+                    pass
+
+                return parent_task_id
 
         task_id = str(uuid.uuid4())
         title = (user_message or "Workflow").strip()
         if len(title) > 60:
             title = title[:57] + "..."
+
+        if any_failed:
+            status = TaskStatus.FAILED
+            progress = 100
+        elif needs_user_input:
+            status = TaskStatus.WAITING_INPUT
+            progress = 50
+        else:
+            status = TaskStatus.COMPLETED
+            progress = 100
 
         task = OrchestratedTask(
             id=task_id,
@@ -381,16 +503,17 @@ class AIBrain:
             title=title,
             description="Chat workflow execution",
             task_type="chat_workflow",
-            status=TaskStatus.FAILED if any_failed else TaskStatus.COMPLETED,
-            progress_percent=100,
+            status=status,
+            progress_percent=progress,
             substeps=substeps,
+            needs_user_input=needs_user_input,
+            input_prompt=input_prompt or "",
             metadata={
                 "session_id": session_id,
                 "message": user_message,
             },
         )
 
-        orchestrator = get_orchestrator()
         orchestrator.active_tasks[task_id] = task
         return task_id
 
@@ -729,9 +852,14 @@ brain = AIBrain()
 # =============================================================================
 # PUBLIC API - Functions called by routes/api.py
 # =============================================================================
-async def chat(session_id: str, message: str, user_id: str = "default") -> Dict[str, Any]:
+async def chat(
+    session_id: str,
+    message: str,
+    user_id: str = "default",
+    parent_task_id: Optional[str] = None,
+) -> Dict[str, Any]:
     """Send a message and get response (non-streaming)"""
-    return await brain.process(session_id, message, user_id)
+    return await brain.process(session_id, message, user_id, parent_task_id=parent_task_id)
 
 
 def get_session(session_id: str) -> Session:

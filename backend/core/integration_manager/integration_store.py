@@ -14,6 +14,8 @@ class IntegrationStore:
     def __init__(self):
         self.supabase = get_supabase_client()
         self.table_name = "user_integrations"
+        # Fallback when Supabase isn't configured (dev / memory-only mode)
+        self._memory_store: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     AVAILABLE_INTEGRATIONS = {
         "google_calendar": {
@@ -100,7 +102,24 @@ class IntegrationStore:
 
     def get_user_integrations(self, user_id: str) -> List[Dict]:
         if not self.supabase:
-            return []
+            connected = []
+            user_records = self._memory_store.get(user_id, {})
+            for provider, record in user_records.items():
+                if record.get("status") != "connected":
+                    continue
+                service_name = record.get("provider", provider)
+                connected.append({
+                    "id": record.get("id"),
+                    "service": service_name,
+                    "name": self.AVAILABLE_INTEGRATIONS.get(service_name, {}).get("name", service_name),
+                    "icon": self.AVAILABLE_INTEGRATIONS.get(service_name, {}).get("icon", "🔗"),
+                    "status": record.get("status"),
+                    "connected_at": record.get("updated_at"),
+                    "last_used_at": record.get("updated_at"),
+                    "provider": service_name,
+                    "scopes": record.get("scopes", []),
+                })
+            return connected
         
         try:
             response = self.supabase.table(self.table_name).select("*").eq("user_id", user_id).execute()
@@ -170,8 +189,21 @@ class IntegrationStore:
         Replaces the old token if the connection exists.
         """
         if not self.supabase:
-            logger.error("Supabase client not available")
-            return False
+            now = datetime.utcnow().isoformat()
+            encrypted_tokens = self._encrypt_token_data(token_data)
+            if user_id not in self._memory_store:
+                self._memory_store[user_id] = {}
+            self._memory_store[user_id][provider] = {
+                "id": self._memory_store[user_id].get(provider, {}).get("id") or f"mem-{user_id}-{provider}",
+                "user_id": user_id,
+                "provider": provider,
+                "encrypted_tokens": encrypted_tokens,
+                "scopes": scopes,
+                "metadata": metadata or {},
+                "status": "connected",
+                "updated_at": now,
+            }
+            return True
 
         encrypted_tokens = self._encrypt_token_data(token_data)
         
@@ -198,7 +230,15 @@ class IntegrationStore:
         Retrieves and decrypts the integration token data.
         """
         if not self.supabase:
-            return None
+            record = self._memory_store.get(user_id, {}).get(provider)
+            if not record or record.get("status") != "connected":
+                return None
+            encrypted_str = record.get("encrypted_tokens")
+            result = dict(record)
+            if encrypted_str:
+                result["tokens"] = self._decrypt_token_data(encrypted_str)
+                result.pop("encrypted_tokens", None)
+            return result
 
         try:
             response = self.supabase.table(self.table_name).select("*").match({
@@ -227,7 +267,20 @@ class IntegrationStore:
         Revokes an integration by changing its status to revoked and removing tokens.
         """
         if not self.supabase:
-            return False
+            if user_id not in self._memory_store:
+                self._memory_store[user_id] = {}
+            now = datetime.utcnow().isoformat()
+            existing = self._memory_store[user_id].get(provider, {})
+            self._memory_store[user_id][provider] = {
+                **existing,
+                "id": existing.get("id") or f"mem-{user_id}-{provider}",
+                "user_id": user_id,
+                "provider": provider,
+                "encrypted_tokens": None,
+                "status": "revoked",
+                "updated_at": now,
+            }
+            return True
 
         data = {
             "user_id": user_id,
