@@ -432,11 +432,11 @@ class GmailOAuthPlugin(BasePlugin):
         ))
         
         return {
-            "status": "completed",
-            "result": f"Email simulated to {to_email} (OAuth/SMTP not configured)",
+            "status": "simulated",
+            "result": f"⚠️ Email to {to_email} was NOT actually sent (no email credentials configured)",
             "email_id": f"sim_{simulated_id}",
             "method": "simulated",
-            "note": "To enable real email sending, configure GMAIL_REFRESH_TOKEN in .env",
+            "note": "To enable real email sending, add SMTP_PASSWORD or GMAIL_APP_PASSWORD to your .env file",
             "last_error": last_error
         }
     

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import useActionRecorder from '../hooks/useActionRecorder';
+import { getDevAuthHeaders } from '../lib/authHeaders';
 
 /**
  * TeachingMode - Recording UI Component
@@ -22,7 +23,7 @@ export default function TeachingMode({ sessionId, apiUrl, onWorkflowSaved, onCan
     try {
       const resp = await fetch(`${apiUrl}/api/teach/record`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
         body: JSON.stringify({
           session_id: sessionId,
           task_description: taskName || 'Recorded workflow',
@@ -30,7 +31,8 @@ export default function TeachingMode({ sessionId, apiUrl, onWorkflowSaved, onCan
         }),
       });
 
-      const data = await resp.json();
+      let data = {};
+      try { data = await resp.json(); } catch (_) { data = { status: 'error', message: 'Invalid server response' }; }
       setResult(data);
 
       if (data.status === 'saved' && onWorkflowSaved) {

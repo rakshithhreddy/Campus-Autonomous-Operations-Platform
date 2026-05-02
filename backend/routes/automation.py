@@ -6,14 +6,19 @@ Endpoints for running automation flows:
 - Service signup
 - Email campaigns
 - Appointment scheduling
+
+FIX: All endpoints now require JWT authentication.
+     user_id is taken from the authenticated principal, not request bodies.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import asyncio
 import logging
+
+from ..core.auth import get_current_principal, Principal
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,6 @@ except ImportError as e:
 
 class MeetingBookingRequest(BaseModel):
     """Request to book a meeting"""
-    user_id: str = Field(..., description="User identifier")
     title: str = Field(..., description="Meeting title")
     participants: List[str] = Field(..., description="List of participant emails")
     datetime: str = Field(..., description="Meeting datetime (ISO format)")
@@ -48,7 +52,6 @@ class MeetingBookingRequest(BaseModel):
 
 class ServiceSignupRequest(BaseModel):
     """Request to sign up for a service"""
-    user_id: str
     service_name: str = Field(..., description="Name of the service")
     service_url: str = Field(..., description="URL of the signup page")
     user_details: Dict[str, str] = Field(..., description="User details for signup form")
@@ -56,7 +59,6 @@ class ServiceSignupRequest(BaseModel):
 
 class EmailCampaignRequest(BaseModel):
     """Request to run an email campaign"""
-    user_id: str
     subject: str = Field(..., description="Email subject (use {name} for personalization)")
     body: str = Field(..., description="Email body template (use {name} for personalization)")
     recipients: List[Dict[str, str]] = Field(..., description="List of recipients [{email, name}]")
@@ -66,7 +68,6 @@ class EmailCampaignRequest(BaseModel):
 
 class AppointmentRequest(BaseModel):
     """Request to schedule an appointment"""
-    user_id: str
     title: str = Field(..., description="Appointment title")
     with_email: str = Field(..., alias="with", description="Email of person to meet")
     preferred_times: List[str] = Field(..., description="List of preferred datetime strings")
@@ -75,7 +76,6 @@ class AppointmentRequest(BaseModel):
 
 class GenericFlowRequest(BaseModel):
     """Generic flow request"""
-    user_id: str
     flow_name: str = Field(..., description="Name of the flow to run")
     parameters: Dict[str, Any] = Field(default={}, description="Flow parameters")
 
@@ -85,7 +85,9 @@ class GenericFlowRequest(BaseModel):
 # =============================================================================
 
 @router.get("/status")
-async def get_automation_status():
+async def get_automation_status(
+    principal: Principal = Depends(get_current_principal),
+):
     """Get automation module status"""
     return {
         "available": AUTOMATION_AVAILABLE,
@@ -94,7 +96,9 @@ async def get_automation_status():
 
 
 @router.get("/flows")
-async def list_available_flows():
+async def list_available_flows(
+    principal: Principal = Depends(get_current_principal),
+):
     """List all available automation flows"""
     if not AUTOMATION_AVAILABLE:
         raise HTTPException(status_code=503, detail="Automation not available")
@@ -133,7 +137,10 @@ async def list_available_flows():
 
 
 @router.post("/book-meeting")
-async def book_meeting(request: MeetingBookingRequest):
+async def book_meeting(
+    request: MeetingBookingRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Book a meeting with all the bells and whistles:
     - Creates meeting room (Jitsi/Zoom)
@@ -145,7 +152,7 @@ async def book_meeting(request: MeetingBookingRequest):
     
     result = await run_automation_flow(
         flow_name="meeting_booking",
-        user_id=request.user_id,
+        user_id=principal.user_id,  # Always from JWT principal
         parameters={
             "title": request.title,
             "participants": request.participants,
@@ -180,7 +187,10 @@ async def book_meeting(request: MeetingBookingRequest):
 
 
 @router.post("/signup")
-async def service_signup(request: ServiceSignupRequest):
+async def service_signup(
+    request: ServiceSignupRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Sign up for a service automatically:
     - Navigates to signup page
@@ -192,7 +202,7 @@ async def service_signup(request: ServiceSignupRequest):
     
     result = await run_automation_flow(
         flow_name="service_signup",
-        user_id=request.user_id,
+        user_id=principal.user_id,  # Always from JWT principal
         parameters={
             "service_name": request.service_name,
             "service_url": request.service_url,
@@ -212,7 +222,8 @@ async def service_signup(request: ServiceSignupRequest):
 @router.post("/email-campaign")
 async def run_email_campaign(
     request: EmailCampaignRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
+    principal: Principal = Depends(get_current_principal),
 ):
     """
     Run an email campaign:
@@ -229,7 +240,7 @@ async def run_email_campaign(
     if len(request.recipients) <= 20:
         result = await run_automation_flow(
             flow_name="email_campaign",
-            user_id=request.user_id,
+            user_id=principal.user_id,  # Always from JWT principal
             parameters={
                 "subject": request.subject,
                 "body": request.body,
@@ -254,7 +265,7 @@ async def run_email_campaign(
     async def run_campaign():
         await run_automation_flow(
             flow_name="email_campaign",
-            user_id=request.user_id,
+            user_id=principal.user_id,  # Always from JWT principal
             parameters={
                 "subject": request.subject,
                 "body": request.body,
@@ -273,7 +284,10 @@ async def run_email_campaign(
 
 
 @router.post("/schedule-appointment")
-async def schedule_appointment(request: AppointmentRequest):
+async def schedule_appointment(
+    request: AppointmentRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Schedule an appointment:
     - Checks calendar availability
@@ -285,7 +299,7 @@ async def schedule_appointment(request: AppointmentRequest):
     
     result = await run_automation_flow(
         flow_name="appointment",
-        user_id=request.user_id,
+        user_id=principal.user_id,  # Always from JWT principal
         parameters={
             "title": request.title,
             "with": request.with_email,
@@ -317,7 +331,10 @@ async def schedule_appointment(request: AppointmentRequest):
 
 
 @router.post("/run")
-async def run_generic_flow(request: GenericFlowRequest):
+async def run_generic_flow(
+    request: GenericFlowRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Run any automation flow by name.
     
@@ -336,7 +353,7 @@ async def run_generic_flow(request: GenericFlowRequest):
     
     result = await run_automation_flow(
         flow_name=request.flow_name,
-        user_id=request.user_id,
+        user_id=principal.user_id,  # Always from JWT principal
         parameters=request.parameters,
     )
     
@@ -357,11 +374,11 @@ async def run_generic_flow(request: GenericFlowRequest):
 
 @router.post("/quick/meeting")
 async def quick_meeting(
-    user_id: str,
     title: str,
     participants: str,  # Comma-separated emails
     when: str = "now",
     meeting_type: str = "jitsi",
+    principal: Principal = Depends(get_current_principal),
 ):
     """
     Quick meeting creation with minimal parameters.
@@ -398,7 +415,7 @@ async def quick_meeting(
             meeting_start_time = None
 
         task = await orchestrator.create_task(
-            user_id=user_id,
+            user_id=principal.user_id,  # Always from JWT principal
             task_type="schedule_meeting",
             params={
                 "title": title,
@@ -417,7 +434,7 @@ async def quick_meeting(
     
     result = await run_automation_flow(
         flow_name="meeting_booking",
-        user_id=user_id,
+        user_id=principal.user_id,  # Always from JWT principal
         parameters={
             "title": title,
             "participants": participant_list,
@@ -483,35 +500,60 @@ async def quick_meeting(
             "status": "failed",
             "error": result.error,
             "message": result.message,
+            "meeting_url": result.data.get("meeting_url"),  # Return URL even on partial failure
             "task_id": task_id,
         }
 
 
 @router.post("/quick/email")
 async def quick_email(
-    user_id: str,
     to: str,
     subject: str,
     body: str,
+    principal: Principal = Depends(get_current_principal),
 ):
     """
-    Quick email sending using user's AI identity.
+    Quick email sending using SMTP/OAuth credentials from .env.
+    Returns 200 even in simulation mode (no credentials configured).
     """
-    if not AUTOMATION_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Automation not available")
+    # Validate inputs
+    if not to or not subject or not body:
+        raise HTTPException(status_code=400, detail="to, subject, and body are all required")
     
     try:
         from ..core.identity_email_service import get_identity_email_service
         
         service = get_identity_email_service()
         result = await service.send_email_for_user(
-            user_id=user_id,
+            user_id=principal.user_id,
             to=to,
             subject=subject,
             body=body,
         )
         
-        return result
+        status = result.get("status", "failed")
         
+        # Accept both real sends and simulated (no credentials) as success
+        if status in ("completed", "simulated"):
+            return {
+                "status": status,
+                "result": result.get("result", f"Email queued for {to}"),
+                "method": result.get("method", "smtp"),
+                "from": result.get("from", ""),
+                "simulated": status == "simulated",
+                "note": result.get("note", ""),
+            }
+        else:
+            # Real failure — return 200 with error info so UI can show it gracefully
+            return {
+                "status": "failed",
+                "result": result.get("error", "Email could not be sent"),
+                "method": result.get("method", "none"),
+                "note": "Configure SMTP_EMAIL and SMTP_PASSWORD in .env to enable real sending.",
+            }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"quick_email error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Email failed: {str(e)}")

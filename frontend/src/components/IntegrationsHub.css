@@ -1,9 +1,14 @@
+/* ==========================================================================
+   SUPER MANAGER - PREMIUM UI OVERHAUL
+   IntegrationsHub.css
+   ========================================================================== */
+
 .integrations-hub {
-  padding: 16px;
+  padding: 24px;
   width: 100%;
   max-width: 100%;
   margin: 0;
-  color: #fff;
+  color: var(--tw-text-primary);
   background: transparent;
   border-radius: 0;
   border: none;
@@ -11,67 +16,75 @@
   max-height: calc(100vh - 140px);
   overflow-y: auto;
   overflow-x: hidden;
+  font-family: var(--font-sans);
 }
 
 .integrations-hub h2 {
   margin-top: 0;
-  margin-bottom: 20px;
-  font-size: 1.5rem;
+  margin-bottom: 24px;
+  font-size: 1.75rem;
+  font-weight: 700;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  letter-spacing: -0.02em;
 }
 
 .integrations-section {
-  margin-bottom: 30px;
+  margin-bottom: 40px;
 }
 
 .integrations-section h3 {
-  font-size: 1.2rem;
-  margin-bottom: 15px;
-  color: #a0a0b0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  padding-bottom: 5px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: var(--tw-text-secondary);
+  border-bottom: 1px solid var(--tw-border);
+  padding-bottom: 8px;
 }
 
 .integration-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
 }
 
 .integration-card {
-  background: rgba(30, 30, 45, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  padding: 15px;
+  background: rgba(17, 24, 39, 0.5);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--tw-border);
+  border-radius: 16px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .integration-card:hover {
-  background: rgba(40, 40, 60, 0.8);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(17, 24, 39, 0.8);
+  border-color: var(--tw-border-hover);
   transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
 }
 
 .integration-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: 16px;
+  margin-bottom: 12px;
 }
 
 .integration-icon {
-  font-size: 2rem;
-  width: 40px;
-  height: 40px;
+  font-size: 24px;
+  width: 48px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  border: 1px solid var(--tw-border);
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.02);
 }
 
 .integration-info {
@@ -80,90 +93,106 @@
 
 .integration-title {
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   margin: 0;
+  color: var(--tw-text-primary);
 }
 
 .integration-status {
-  font-size: 0.8rem;
-  padding: 2px 8px;
-  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: 20px;
   display: inline-block;
-  margin-top: 4px;
+  margin-top: 6px;
+  border: 1px solid transparent;
 }
 
 .integration-status.connected {
-  background: rgba(46, 204, 113, 0.2);
-  color: #2ecc71;
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--tw-success);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .integration-status.available {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--tw-text-muted);
+  border-color: var(--tw-border);
 }
 
 .integration-desc {
-  font-size: 0.9rem;
-  color: #999;
-  margin-bottom: 15px;
+  font-size: 0.95rem;
+  color: var(--tw-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 24px;
   flex: 1;
 }
 
 .integration-actions {
   display: flex;
   justify-content: flex-end;
+  border-top: 1px solid var(--tw-border);
+  padding-top: 16px;
 }
 
 .btn-connect, .btn-revoke {
   border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  font-weight: 500;
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: var(--font-sans);
 }
 
 .btn-connect {
-  background: linear-gradient(135deg, #4facfe, #00f2fe);
+  background: linear-gradient(135deg, var(--tw-accent-primary), #8b5cf6);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
 .btn-connect:hover {
-  background: linear-gradient(135deg, #4facfe, #00c6ff);
-  box-shadow: 0 4px 12px rgba(0, 242, 254, 0.3);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.5);
 }
 
 .btn-revoke {
-  background: rgba(231, 76, 60, 0.2);
-  color: #e74c3c;
-  border: 1px solid rgba(231, 76, 60, 0.3);
+  background: rgba(244, 63, 94, 0.1);
+  color: var(--tw-danger);
+  border: 1px solid rgba(244, 63, 94, 0.3);
 }
 
 .btn-revoke:hover {
-  background: rgba(231, 76, 60, 0.3);
-  border-color: rgba(231, 76, 60, 0.5);
+  background: var(--tw-danger);
+  color: #fff;
+  border-color: var(--tw-danger);
 }
 
 .btn-connecting {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--tw-text-muted);
   cursor: not-allowed;
+  border: 1px solid var(--tw-border);
 }
 
 .integration-loader {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 40px;
-  color: #888;
+  padding: 60px;
+  color: var(--tw-text-muted);
+  font-size: 1.1rem;
 }
 
 .empty-state {
   text-align: center;
-  padding: 20px;
-  color: #777;
-  font-style: italic;
-  background: rgba(0,0,0,0.1);
-  border-radius: 8px;
+  padding: 40px;
+  color: var(--tw-text-muted);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px dashed var(--tw-border);
+  border-radius: 16px;
+  font-size: 1rem;
 }

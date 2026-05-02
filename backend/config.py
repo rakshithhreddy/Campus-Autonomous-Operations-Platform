@@ -7,10 +7,14 @@ and environment-specific settings.
 """
 
 import os
+from pathlib import Path
 from typing import Optional, List, Any
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+
+BACKEND_ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -39,9 +43,14 @@ class Settings(BaseSettings):
     # ==========================================================================
     # AI/LLM Settings
     # ==========================================================================
+    # Kimi (Moonshot) is OpenAI-compatible.
+    kimi_api_key: Optional[str] = Field(default=None, description="Kimi (Moonshot) API key")
+    kimi_base_url: Optional[str] = Field(default=None, description="Kimi (Moonshot) OpenAI-compatible base URL")
+    kimi_model: Optional[str] = Field(default=None, description="Default Kimi model")
+
     openrouter_api_key: Optional[str] = Field(default=None, description="OpenRouter API key")
     groq_api_key: Optional[str] = Field(default=None, description="Groq API key")
-    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API key (primary)")
+    openai_api_key: Optional[str] = Field(default=None, description="OpenAI-compatible API key (OpenAI or Kimi)")
     sambanova_api_key: Optional[str] = Field(default=None, description="SambaNova API key (free)")
     gemini_api_key: Optional[str] = Field(default=None, description="Gemini API key (fallback)")
     ai_model: str = Field(default="gpt-4-turbo-preview", description="Default AI model")
@@ -150,8 +159,8 @@ class Settings(BaseSettings):
         missing = []
         
         if self.is_production:
-            if not self.openai_api_key:
-                missing.append("OPENAI_API_KEY")
+            if not (self.kimi_api_key or self.openai_api_key):
+                missing.append("KIMI_API_KEY or OPENAI_API_KEY")
             if not self.supabase_url:
                 missing.append("SUPABASE_URL")
             if not self.supabase_key:
@@ -160,11 +169,13 @@ class Settings(BaseSettings):
                 missing.append("SECRET_KEY (must be changed from default)")
             if self.encryption_secret == "change-this-secret-key-in-production-min32chars":
                 missing.append("ENCRYPTION_SECRET (must be changed from default)")
+            if not (os.getenv("ENCRYPTION_MASTER_KEY") or "").strip():
+                missing.append("ENCRYPTION_MASTER_KEY")
         
         return missing
     
     model_config = {
-        "env_file": ".env",
+        "env_file": str(BACKEND_ENV_FILE),
         "env_file_encoding": "utf-8",
         "case_sensitive": False,
         "extra": "ignore",  # Ignore extra env vars
@@ -184,16 +195,23 @@ def get_settings() -> Settings:
 def validate_settings() -> None:
     """
     Validate settings on startup.
-    
-    Raises ValueError if required settings are missing in production.
+
+    Items 23 & 28: raises SystemExit in production so no catch-all exception handler
+    can swallow the failure. Dev/test environments log a warning instead.
     """
+    import logging as _logging
     settings = get_settings()
     missing = settings.validate_required()
-    
+
     if missing:
-        raise ValueError(
-            f"Missing required configuration for {settings.app_env}: {', '.join(missing)}"
-        )
+        if settings.is_production:
+            raise SystemExit(
+                f"FATAL: Missing/unsafe required configuration for production: {', '.join(missing)}"
+            )
+        else:
+            _logging.getLogger(__name__).warning(
+                f"[CONFIG] Non-production env has missing/default config (safe for dev): {', '.join(missing)}"
+            )
 
 
 # Convenience exports

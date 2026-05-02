@@ -19,7 +19,7 @@ from typing import Dict, Any, Optional, List, Set
 
 from .primitives import (
     web_search, browse_page, scrape_data, generate_image,
-    fill_form, run_python, send_email, create_meeting, save_note, click_link,
+    fill_form, run_python, send_email, create_meeting, save_note, click_link, send_telegram,
     PrimitiveResult, PRIMITIVES,
 )
 
@@ -60,8 +60,8 @@ class RiskClassifier:
     Does NOT use LLM - purely static analysis.
     """
 
-    SAFE_PRIMITIVES = {"web_search", "browse_page", "scrape_data", "generate_image", "send_email", "create_meeting", "save_note", "click_link"}
-    RISKY_PRIMITIVES = {"fill_form", "run_python"}
+    SAFE_PRIMITIVES = {"web_search", "browse_page", "scrape_data", "generate_image", "save_note", "click_link"}
+    RISKY_PRIMITIVES = {"fill_form", "run_python", "send_email", "create_meeting"}
 
     # Patterns that are ALWAYS forbidden (security)
     FORBIDDEN_PATTERNS = [
@@ -168,7 +168,7 @@ class RiskClassifier:
 
         Returns same format as classify().
         """
-        # Check ToolRegistry first (supports dynamic tools: MCP, stealth, payment, etc.)
+        # Check ToolRegistry first (supports MCP, stealth, payment, etc.)
         registry = _get_registry()
         if registry:
             tool = registry.get(primitive_name)
@@ -229,16 +229,40 @@ class SandboxExecutor:
         Used for simple <action> tags.
         Checks ToolRegistry first, falls back to PRIMITIVES dict.
         """
+        context = context or {}
+        mission_id = context.get("mission_id")
+        from .governance_bridge import get_governance_bridge
+        bridge = get_governance_bridge()
         # Try ToolRegistry first (supports MCP, stealth, payment, etc.)
         registry = _get_registry()
         if registry:
             tool = registry.get(primitive_name)
             if tool and tool.handler:
                 try:
+                    # Inject user_id from context if supported by the handler
+                    if (context or {}).get("user_id"):
+                        import inspect
+                        sig = inspect.signature(tool.handler)
+                        if "user_id" in sig.parameters:
+                            params["user_id"] = context["user_id"]
+
                     result = await asyncio.wait_for(
                         tool.handler(**params),
                         timeout=self.timeout,
                     )
+                    
+                    # 🛡️ GOVERNANCE BRIDGE: Record Step
+                    if mission_id:
+                        bridge.record_step_execution(
+                            mission_id=mission_id,
+                            step_title=f"Action: {primitive_name}",
+                            action_type=primitive_name,
+                            risk_level=tool.risk_level,
+                            params=params,
+                            result=str(result),
+                            success=True
+                        )
+
                     if isinstance(result, PrimitiveResult):
                         return ExecutionResult(
                             success=result.success,
@@ -289,11 +313,31 @@ class SandboxExecutor:
         prim_info = PRIMITIVES[primitive_name]
         prim_func = prim_info["function"]
 
+        # Inject user_id from context if supported by the primitive
+        if context.get("user_id"):
+            # Check if the function accepts user_id
+            import inspect
+            sig = inspect.signature(prim_func)
+            if "user_id" in sig.parameters:
+                params["user_id"] = context["user_id"]
+
         try:
             result = await asyncio.wait_for(
                 prim_func(**params),
                 timeout=self.timeout,
             )
+
+            # 🛡️ GOVERNANCE BRIDGE: Record Step
+            if mission_id:
+                bridge.record_step_execution(
+                    mission_id=mission_id,
+                    step_title=f"Action: {primitive_name}",
+                    action_type=primitive_name,
+                    risk_level="low", # Default for primitives
+                    params=params,
+                    result=result.output,
+                    success=result.success
+                )
 
             return ExecutionResult(
                 success=result.success,
@@ -327,6 +371,9 @@ class SandboxExecutor:
         Previous step results are available via `context`.
         """
         context = context or {}
+        mission_id = context.get("mission_id")
+        from .governance_bridge import get_governance_bridge
+        bridge = get_governance_bridge()
 
         # Step 1: Validate code
         classification = self.classifier.classify(code)
@@ -369,6 +416,21 @@ class SandboxExecutor:
 
         safe_builtins["print"] = sandbox_print
 
+        # Inject all registered tools from ToolRegistry (MCP, stealth, payment, etc.)
+        registry = _get_registry()
+        
+        # Wrapped primitives that automatically include user_id
+        def wrap_prim(p_func):
+            import inspect
+            sig = inspect.signature(p_func)
+            if "user_id" in sig.parameters:
+                async def wrapped_p(*args, **kwargs):
+                    if context.get("user_id"):
+                        kwargs["user_id"] = context["user_id"]
+                    return await p_func(*args, **kwargs)
+                return wrapped_p
+            return p_func
+
         sandbox_globals = {
             "__builtins__": safe_builtins,
             # Modules
@@ -377,28 +439,26 @@ class SandboxExecutor:
             "math": math,
             "datetime": datetime,
             "urlparse": urlparse,
-            # Legacy primitives (always available)
-            "web_search": web_search,
-            "browse_page": browse_page,
-            "scrape_data": scrape_data,
-            "generate_image": generate_image,
-            "fill_form": fill_form,
-            "run_python": run_python,
-            # New primitives (email, meeting, notes)
-            "send_email": send_email,
-            "create_meeting": create_meeting,
-            "save_note": save_note,
-            "click_link": click_link,
+            # Legacy primitives (wrapped for user_id)
+            "web_search": wrap_prim(web_search),
+            "browse_page": wrap_prim(browse_page),
+            "scrape_data": wrap_prim(scrape_data),
+            "generate_image": wrap_prim(generate_image),
+            "fill_form": wrap_prim(fill_form),
+            "run_python": wrap_prim(run_python),
+            "send_email": wrap_prim(send_email),
+            "create_meeting": wrap_prim(create_meeting),
+            "save_note": wrap_prim(save_note),
+            "click_link": wrap_prim(click_link),
+            "send_telegram": wrap_prim(send_telegram),
             # Context from previous steps
             "context": context,
         }
 
-        # Inject all registered tools from ToolRegistry (MCP, stealth, payment, etc.)
-        registry = _get_registry()
         if registry:
             for tool in registry.list_tools():
                 if tool.handler and tool.name not in sandbox_globals:
-                    sandbox_globals[tool.name] = tool.handler
+                    sandbox_globals[tool.name] = wrap_prim(tool.handler)
 
         # Step 3: Wrap code in an async function
         # Indent each line of the user code
@@ -433,6 +493,18 @@ async def _sandbox_main():
 
             if not output:
                 output = "Code executed successfully (no output)."
+
+            # 🛡️ GOVERNANCE BRIDGE: Record Step
+            if mission_id:
+                bridge.record_step_execution(
+                    mission_id=mission_id,
+                    step_title="Execute Code Block",
+                    action_type="code_execution",
+                    risk_level="medium",
+                    params={"code_length": len(code)},
+                    result=output,
+                    success=True
+                )
 
             return ExecutionResult(
                 success=True,

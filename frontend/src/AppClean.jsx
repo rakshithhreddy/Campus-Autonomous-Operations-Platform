@@ -24,6 +24,7 @@ import LivePreview from './components/LivePreview'
 import AdaptiveWorkspace from './components/AdaptiveWorkspace'
 import Toast, { ToastProvider, useToast } from './components/Toast'
 import './styles/clean-theme.css'
+import { getDevAuthHeaders } from './lib/authHeaders'
 
 const API = import.meta.env.VITE_API_URL
 
@@ -602,8 +603,8 @@ function App() {
       // Try SSE streaming first
       const res = await fetch(`${API}/api/chat/stream`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: msg, session_id: sessionId, user_id: userId }),
+        headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
+        body: JSON.stringify({ message: msg, session_id: sessionId }),
         signal: abortRef.current.signal
       })
 
@@ -720,14 +721,21 @@ function App() {
         try {
           const res = await fetch(`${API}/api/chat`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg, session_id: sessionId, user_id: userId }),
+            headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
+            body: JSON.stringify({ message: msg, session_id: sessionId }),
             signal: abortRef.current.signal
           })
 
           if (!res.ok) throw new Error(`Server error: ${res.status}`)
 
-          const data = await res.json()
+          // Safe JSON parse — guard against empty or non-JSON body
+          let data = {}
+          const rawText = await res.text()
+          if (rawText) {
+            try { data = JSON.parse(rawText) } catch (_) {
+              data = { message: `Server returned invalid response (status ${res.status})`, type: 'error' }
+            }
+          }
           setSessionId(data.session_id)
 
           // Remove any building messages
@@ -752,7 +760,7 @@ function App() {
             const cleaned = prev.filter(m => !m._building)
             return [...cleaned, {
               role: 'error',
-              text: fallbackErr.message === 'Failed to fetch'
+              text: (fallbackErr.message === 'Failed to fetch' || fallbackErr.message && fallbackErr.message.indexOf('Cannot connect to server') !== -1)
                 ? 'Unable to connect. Please check your connection and try again.'
                 : 'Something went wrong. Please try again.',
               timestamp: new Date().toISOString()
@@ -808,10 +816,9 @@ function App() {
     try {
       await fetch(`${API}/api/feedback`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
         body: JSON.stringify({
           session_id: sessionId,
-          user_id: userId,
           message_index: messageIndex,
           rating,
           comment: comment || null,
@@ -853,7 +860,7 @@ function App() {
             <Zap />
           </div>
           <div className="header-info">
-            <h1>Super Manager</h1>
+            <h1>CAOP</h1>
             <span>Your AI Assistant</span>
           </div>
         </div>

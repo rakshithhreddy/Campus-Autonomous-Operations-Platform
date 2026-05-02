@@ -8,6 +8,11 @@ from typing import Dict, Any, List, Optional, AsyncGenerator, Union
 import json
 
 from .base_provider import BaseAIProvider, ProviderConfig, AIResponse, ProviderStatus
+from ..openai_compat import (
+    get_openai_compatible_api_key,
+    get_openai_compatible_base_url,
+    get_openai_compatible_model,
+)
 
 try:
     from openai import AsyncOpenAI
@@ -48,27 +53,43 @@ class OpenAIProvider(BaseAIProvider):
     
     def __init__(self):
         super().__init__()
-        self.api_key = os.getenv("OPENAI_API_KEY", "")
+
+        # Treat Kimi (Moonshot) as an OpenAI-compatible endpoint.
+        self.api_key = get_openai_compatible_api_key()
+        self.base_url = get_openai_compatible_base_url()
+
+        # Allow env to override the default model (e.g. KIMI_MODEL).
+        self.config.default_model = get_openai_compatible_model()
+
         self._client = None
-        
+
         if self.api_key and OPENAI_AVAILABLE:
-            self._client = AsyncOpenAI(api_key=self.api_key)
+            # `base_url` enables OpenAI-compatible providers.
+            self._client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
             self._status = ProviderStatus.AVAILABLE
         else:
             self._status = ProviderStatus.UNAVAILABLE
             if not OPENAI_AVAILABLE:
                 self._last_error = "openai package not installed"
             else:
-                self._last_error = "OPENAI_API_KEY not set"
+                self._last_error = "KIMI_API_KEY / OPENAI_API_KEY not set"
     
     async def health_check(self) -> bool:
-        """Check if OpenAI API is accessible"""
+        """Check if the OpenAI-compatible API is accessible.
+
+        Many OpenAI-compatible providers (including some Kimi deployments) may not
+        fully support the /models endpoint, so we do a tiny chat call instead.
+        """
         if not self._client:
             return False
-        
+
         try:
-            # Simple model list call to verify API key
-            models = await self._client.models.list()
+            await self._client.chat.completions.create(
+                model=self.config.default_model or "gpt-4o-mini",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                temperature=0,
+            )
             self._status = ProviderStatus.AVAILABLE
             return True
         except Exception as e:
@@ -76,6 +97,16 @@ class OpenAIProvider(BaseAIProvider):
             self._record_error(str(e))
             return False
     
+    def supports_model(self, model: str) -> bool:
+        """OpenAI-compatible endpoints may expose provider-specific model IDs.
+
+        If the base_url is overridden (e.g. Kimi), allow any model string.
+        """
+
+        if getattr(self, "base_url", None) and self.base_url.rstrip("/") != self.config.base_url.rstrip("/"):
+            return True
+        return super().supports_model(model)
+
     async def generate(
         self,
         messages: List[Dict[str, str]],
@@ -86,7 +117,7 @@ class OpenAIProvider(BaseAIProvider):
         json_mode: bool = False,
         **kwargs
     ) -> Union[AIResponse, AsyncGenerator[str, None]]:
-        """Generate completion using OpenAI"""
+        """Generate completion using OpenAI-compatible API"""
         
         if not self._client:
             raise Exception("OpenAI client not initialized")

@@ -20,10 +20,17 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 import httpx
 
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
+
+from ..core.openai_compat import (
+    build_openai_compatible_url,
+    get_openai_compatible_api_key,
+    get_openai_compatible_model,
+)
 
 
 # =============================================================================
@@ -35,7 +42,7 @@ class AgentConfig:
     """Agent configuration"""
     # AI Models
     groq_api_key: str = field(default_factory=lambda: os.getenv("GROQ_API_KEY", ""))
-    openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    openai_api_key: str = field(default_factory=get_openai_compatible_api_key)
     anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
     google_ai_key: str = field(default_factory=lambda: os.getenv("GOOGLE_AI_KEY", ""))
     
@@ -178,12 +185,12 @@ class GroqProvider(AIProvider):
 
 
 class OpenAIProvider(AIProvider):
-    """OpenAI (GPT-4) provider"""
+    """OpenAI-compatible provider (Kimi/Moonshot supported)"""
     
-    def __init__(self, api_key: str, model: str = "gpt-4-turbo-preview"):
+    def __init__(self, api_key: str, model: Optional[str] = None):
         self.api_key = api_key
-        self.model = model
-        self.base_url = "https://api.openai.com/v1/chat/completions"
+        self.model = model or get_openai_compatible_model()
+        self.base_url = build_openai_compatible_url("/chat/completions")
     
     async def complete(
         self,

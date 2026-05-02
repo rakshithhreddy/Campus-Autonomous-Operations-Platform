@@ -8,11 +8,13 @@ Endpoints for managing the AI's digital identity:
 - Handle sensitive data requests
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
+
+from ..core.auth import get_current_principal, Principal
 
 # Import agent modules with error handling
 _import_errors = []
@@ -59,6 +61,12 @@ if _import_errors:
     print(f"[IDENTITY ROUTES] Import errors: {_import_errors}")
 
 router = APIRouter(prefix="/api/identity", tags=["AI Identity"])
+
+
+def _require_principal_user(principal: Principal, supplied_user_id: Optional[str] = None) -> str:
+    if supplied_user_id and supplied_user_id != principal.user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return principal.user_id
 
 
 # =============================================================================
@@ -130,7 +138,7 @@ class SignupServiceRequest(BaseModel):
 # =============================================================================
 
 @router.post("/setup")
-async def setup_ai_identity(request: SetupIdentityRequest):
+async def setup_ai_identity(request: SetupIdentityRequest, principal: Principal = Depends(get_current_principal)):
     """
     Set up the AI's email identity.
     
@@ -144,12 +152,13 @@ async def setup_ai_identity(request: SetupIdentityRequest):
     """
     import traceback
     try:
-        print(f"[IDENTITY SETUP] Starting for user {request.user_id}")
+        user_id = _require_principal_user(principal, getattr(request, "user_id", None))
+        print(f"[IDENTITY SETUP] Starting for user {user_id}")
         manager = get_identity_manager()
         print(f"[IDENTITY SETUP] Got manager, creating identity")
         
         identity, message = await manager.create_identity(
-            user_id=request.user_id,
+            user_id=user_id,
             email=request.email,
             password=request.app_password,
             display_name=request.display_name,
@@ -183,8 +192,9 @@ async def setup_ai_identity(request: SetupIdentityRequest):
 
 
 @router.get("/status/{user_id}")
-async def get_identity_status(user_id: str):
+async def get_identity_status(user_id: str, principal: Principal = Depends(get_current_principal)):
     """Get the status of user's AI identity"""
+    user_id = _require_principal_user(principal, user_id)
 
     import os
     encryption_configured = bool(os.getenv("ENCRYPTION_SECRET"))
@@ -242,9 +252,9 @@ async def get_identity_status(user_id: str):
 
 
 @router.post("/verify")
-async def verify_identity(user_id: str):
+async def verify_identity(user_id: str, principal: Principal = Depends(get_current_principal)):
     """Verify that the AI identity credentials still work"""
-    
+    user_id = _require_principal_user(principal, user_id)
     manager = get_identity_manager()
     gmail = await manager.get_gmail_manager(user_id)
     
@@ -264,7 +274,11 @@ async def verify_identity(user_id: str):
 # =============================================================================
 
 @router.post("/services/signup")
-async def signup_for_service(request: SignupServiceRequest, background_tasks: BackgroundTasks):
+async def signup_for_service(
+    request: SignupServiceRequest,
+    background_tasks: BackgroundTasks,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Initiate signup for an online service using browser automation.
     
@@ -292,8 +306,9 @@ async def signup_for_service(request: SignupServiceRequest, background_tasks: Ba
         }
     
     # Get AI identity
+    user_id = _require_principal_user(principal, getattr(request, "user_id", None))
     manager = get_identity_manager()
-    identity = await manager.get_identity(request.user_id)
+    identity = await manager.get_identity(user_id)
     
     if not identity:
         raise HTTPException(
@@ -314,14 +329,14 @@ async def signup_for_service(request: SignupServiceRequest, background_tasks: Ba
         }
     
     # Run signup automation
-    result = await automation.signup(request.service_name, request.user_id)
+    result = await automation.signup(request.service_name, user_id)
     
     # Store API key if obtained
     if result.success and result.api_key:
         signup = ServiceSignup(identity.email, "")
         await signup.store_service_account(
-            user_id=request.user_id,
-            ai_identity_id=str(identity.id) if hasattr(identity, 'id') else request.user_id,
+            user_id=user_id,
+            ai_identity_id=str(identity.id) if hasattr(identity, 'id') else user_id,
             service_name=request.service_name,
             api_key=result.api_key,
             api_secret=result.api_secret,
@@ -340,7 +355,9 @@ async def signup_for_service(request: SignupServiceRequest, background_tasks: Ba
 
 
 @router.get("/services/available")
-async def get_available_services():
+async def get_available_services(
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Get list of services available for automated signup.
     """
@@ -353,15 +370,16 @@ async def get_available_services():
 
 
 @router.post("/services/store")
-async def store_service_account(request: StoreServiceAccountRequest):
+async def store_service_account(request: StoreServiceAccountRequest, principal: Principal = Depends(get_current_principal)):
     """
     Store API credentials after manual signup.
     
     User signs up for a service manually, then provides the API key here.
     """
     
+    user_id = _require_principal_user(principal, getattr(request, "user_id", None))
     manager = get_identity_manager()
-    identity = await manager.get_identity(request.user_id)
+    identity = await manager.get_identity(user_id)
     
     if not identity:
         raise HTTPException(status_code=400, detail="No AI identity found")
@@ -369,7 +387,7 @@ async def store_service_account(request: StoreServiceAccountRequest):
     signup = ServiceSignup(identity.email, "")
     
     success = await signup.store_service_account(
-        user_id=request.user_id,
+        user_id=user_id,
         ai_identity_id=identity.id,
         service_name=request.service_name,
         api_key=request.api_key,
@@ -388,10 +406,11 @@ async def store_service_account(request: StoreServiceAccountRequest):
 
 
 @router.get("/services/{user_id}")
-async def list_service_accounts(user_id: str):
+async def list_service_accounts(user_id: str, principal: Principal = Depends(get_current_principal)):
     """List all service accounts for a user's AI"""
     
     try:
+        user_id = _require_principal_user(principal, user_id)
         manager = get_identity_manager()
         identity = await manager.get_identity(user_id)
         
@@ -408,9 +427,10 @@ async def list_service_accounts(user_id: str):
 
 
 @router.get("/services/{user_id}/{service_name}")
-async def get_service_credentials(user_id: str, service_name: str):
+async def get_service_credentials(user_id: str, service_name: str, principal: Principal = Depends(get_current_principal)):
     """Get credentials for a specific service"""
     
+    user_id = _require_principal_user(principal, user_id)
     manager = get_identity_manager()
     identity = await manager.get_identity(user_id)
     
@@ -435,7 +455,8 @@ async def request_sensitive_data(
     user_id: str,
     data_type: str,
     purpose: str,
-    service_name: Optional[str] = None
+    service_name: Optional[str] = None,
+    principal: Principal = Depends(get_current_principal),
 ):
     """
     Create a request for sensitive data (OTP, PAN, etc.).
@@ -444,6 +465,7 @@ async def request_sensitive_data(
     User must provide the data through /sensitive/provide endpoint.
     """
     
+    user_id = _require_principal_user(principal, user_id)
     handler = SensitiveDataHandler(user_id)
     request_id = await handler.request_sensitive_data(
         data_type=data_type,
@@ -461,14 +483,15 @@ async def request_sensitive_data(
 
 
 @router.post("/sensitive/provide")
-async def provide_sensitive_data(request: SensitiveDataRequest):
+async def provide_sensitive_data(request: SensitiveDataRequest, principal: Principal = Depends(get_current_principal)):
     """
     User provides sensitive data for a pending request.
     
     Data is stored in memory only and deleted after use.
     """
     
-    handler = SensitiveDataHandler(request.user_id)
+    user_id = _require_principal_user(principal, getattr(request, "user_id", None))
+    handler = SensitiveDataHandler(user_id)
     success = await handler.receive_sensitive_data(
         request_id=request.request_id,
         data=request.data
@@ -488,9 +511,10 @@ async def provide_sensitive_data(request: SensitiveDataRequest):
 # =============================================================================
 
 @router.get("/decisions/{user_id}")
-async def get_ai_decisions(user_id: str, limit: int = 20):
+async def get_ai_decisions(user_id: str, limit: int = 20, principal: Principal = Depends(get_current_principal)):
     """Get recent AI decisions for accountability"""
     
+    user_id = _require_principal_user(principal, user_id)
     responsible_ai = ResponsibleAI(user_id)
     
     # This would normally query the database
@@ -502,9 +526,10 @@ async def get_ai_decisions(user_id: str, limit: int = 20):
 
 
 @router.get("/commitments/{user_id}")
-async def get_ai_commitments(user_id: str):
+async def get_ai_commitments(user_id: str, principal: Principal = Depends(get_current_principal)):
     """Get active AI commitments"""
     
+    user_id = _require_principal_user(principal, user_id)
     responsible_ai = ResponsibleAI(user_id)
     commitments = await responsible_ai.get_active_commitments()
     
@@ -516,13 +541,14 @@ async def get_ai_commitments(user_id: str):
 # =============================================================================
 
 @router.get("/email/recent/{user_id}")
-async def get_recent_emails(user_id: str, max_results: int = 10):
+async def get_recent_emails(user_id: str, max_results: int = 10, principal: Principal = Depends(get_current_principal)):
     """
     Get recent emails from the AI's inbox.
     
     Useful for checking verification emails, OTPs, etc.
     """
     try:
+        user_id = _require_principal_user(principal, user_id)
         gmail_reader = get_gmail_reader()
         emails = await gmail_reader.fetch_recent_emails(max_results=max_results)
         
@@ -544,7 +570,11 @@ async def get_recent_emails(user_id: str, max_results: int = 10):
 
 
 @router.post("/email/wait-verification")
-async def wait_for_verification_email(service_name: str, timeout: int = 120):
+async def wait_for_verification_email(
+    service_name: str,
+    timeout: int = 120,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Wait for a verification email from a service.
     
@@ -578,7 +608,9 @@ async def wait_for_verification_email(service_name: str, timeout: int = 120):
 # =============================================================================
 
 @router.get("/registry/services")
-async def list_available_services():
+async def list_available_services(
+    principal: Principal = Depends(get_current_principal),
+):
     """List all known services in the registry"""
     
     services = []
@@ -596,7 +628,9 @@ async def list_available_services():
 
 
 @router.get("/registry/blocked")
-async def list_blocked_services():
+async def list_blocked_services(
+    principal: Principal = Depends(get_current_principal),
+):
     """List services that are blocked (need verification)"""
     
     blocked = []
@@ -612,7 +646,10 @@ async def list_blocked_services():
 
 
 @router.get("/registry/for-task/{task_type}")
-async def get_services_for_task(task_type: str):
+async def get_services_for_task(
+    task_type: str,
+    principal: Principal = Depends(get_current_principal),
+):
     """Get recommended services for a specific task type"""
     
     services = ServiceRegistry.get_service_for_task(task_type)
@@ -638,7 +675,10 @@ class ExecutePlanRequest(BaseModel):
 
 
 @router.post("/task/plan")
-async def create_task_plan(request: TaskPlanRequest):
+async def create_task_plan(
+    request: TaskPlanRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Create an autonomous task plan.
     
@@ -684,7 +724,11 @@ async def create_task_plan(request: TaskPlanRequest):
 
 
 @router.post("/task/execute")
-async def execute_task_plan(request: ExecutePlanRequest, background_tasks: BackgroundTasks):
+async def execute_task_plan(
+    request: ExecutePlanRequest,
+    background_tasks: BackgroundTasks,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Execute a task plan.
     
@@ -728,7 +772,10 @@ async def execute_task_plan(request: ExecutePlanRequest, background_tasks: Backg
 
 
 @router.get("/task/status/{task_id}")
-async def get_task_status(task_id: str):
+async def get_task_status(
+    task_id: str,
+    principal: Principal = Depends(get_current_principal),
+):
     """Get the status of a task plan"""
     try:
         from ..agent.task_planner import get_task_planner
@@ -763,7 +810,9 @@ async def get_task_status(task_id: str):
 
 
 @router.get("/task/capabilities")
-async def list_available_capabilities():
+async def list_available_capabilities(
+    principal: Principal = Depends(get_current_principal),
+):
     """List all capabilities the AI can provide"""
     try:
         from ..agent.task_planner import SERVICE_REGISTRY

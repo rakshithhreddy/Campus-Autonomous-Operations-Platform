@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiUrl } from '../lib/apiBase';
+import { getDevAuthHeaders } from '../lib/authHeaders';
 
 // =============================================================================
 // useChat Hook
@@ -62,11 +63,11 @@ export function useChat(options = {}) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...getDevAuthHeaders(),
           },
           body: JSON.stringify({
             message: content.trim(),
             session_id: conversationId,
-            user_id: userId,
           }),
           signal: abortControllerRef.current.signal,
         });
@@ -76,7 +77,14 @@ export function useChat(options = {}) {
           throw new Error(errorData.message || `HTTP ${response.status}`);
         }
 
-        const data = await response.json();
+        // Safe JSON parse — guard against empty or non-JSON body
+        let data = {};
+        const rawText = await response.text();
+        if (rawText) {
+          try { data = JSON.parse(rawText); } catch (_) {
+            data = { message: `Server returned invalid response (status ${response.status})`, type: 'error' };
+          }
+        }
         
         // Update session/conversation ID
         if (data.session_id || data.conversation_id) {
@@ -390,7 +398,8 @@ export function useFetch(url, options = {}) {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
-      const result = await response.json();
+      let result = {};
+      try { result = await response.json(); } catch (_) { /* invalid JSON */ }
       setData(transform(result));
     } catch (err) {
       setError(err.message);

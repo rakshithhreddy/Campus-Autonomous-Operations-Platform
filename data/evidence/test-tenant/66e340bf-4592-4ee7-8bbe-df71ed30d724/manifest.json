@@ -1,0 +1,41 @@
+{
+  "mission_id": "66e340bf-4592-4ee7-8bbe-df71ed30d724",
+  "artifact_count": 1,
+  "artifacts": [
+    {
+      "artifact_id": "b711a6bd-6456-4ba7-aa94-ecd403925391",
+      "mission_id": "66e340bf-4592-4ee7-8bbe-df71ed30d724",
+      "tenant_id": "test-tenant",
+      "user_id": "test-user-123",
+      "step_id": "e18a4654-a856-46d0-a36f-e890caf76afa",
+      "name": "approval-note.txt",
+      "content_type": "text/plain",
+      "file_path": "data\\evidence\\test-tenant\\66e340bf-4592-4ee7-8bbe-df71ed30d724\\b711a6bd-6456-4ba7-aa94-ecd403925391.txt",
+      "content_hash": "be0003f0ac47558ee23138777a0acdbb9a48afca5074055165ab6cc104d5c123",
+      "previous_hash": null,
+      "classification": "internal",
+      "metadata": {
+        "retention_days": 365,
+        "expires_at": "2027-04-23T15:51:47.767939",
+        "chain_index": 1
+      },
+      "created_at": "2026-04-23T15:51:47.767939"
+    }
+  ],
+  "chain_of_custody": [
+    {
+      "artifact_id": "b711a6bd-6456-4ba7-aa94-ecd403925391",
+      "content_hash": "be0003f0ac47558ee23138777a0acdbb9a48afca5074055165ab6cc104d5c123",
+      "previous_hash": null,
+      "chain_index": 1,
+      "created_at": "2026-04-23T15:51:47.767939"
+    }
+  ],
+  "retention_policy": {
+    "retention_days": 365,
+    "include_expired": true
+  },
+  "expired_artifact_count": 0,
+  "generated_at": "2026-04-23T15:51:47.767939",
+  "bundle_hash": "f34f0c727c57097e275a836fe5f6ff3bccbfa3d7dcfd691e19a69bf9a2d0dd0f"
+}

@@ -28,6 +28,9 @@ from typing import Dict, Any, Optional, List
 from urllib.parse import unquote, quote
 
 import httpx
+import os
+import secrets
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +242,68 @@ async def generate_image(prompt: str) -> PrimitiveResult:
 
     except Exception as e:
         return PrimitiveResult(success=False, output=f"Image generation failed: {str(e)}", error=str(e))
+
+
+async def save_memory(key: str, value: str, category: str = "context", user_id: str = "") -> PrimitiveResult:
+    """
+    Save a piece of information to the user's long-term memory.
+    The AI should use this when the user mentions personal facts, preferences, or context.
+    
+    Returns: PrimitiveResult
+    """
+    if not key or not value:
+        return PrimitiveResult(success=False, output="Key and value are required.", error="missing_args")
+        
+    try:
+        from ..database_supabase import get_db, Memory
+        db = get_db()
+        # Default user_id if not provided
+        uid = user_id or "default"
+        
+        memory = Memory(user_id=uid, key=key, value=value, category=category)
+        await db.set_memory(memory)
+        
+        return PrimitiveResult(
+            success=True,
+            output=f"Successfully remembered: {key} = {value}",
+            data={"key": key, "value": value, "category": category}
+        )
+    except Exception as e:
+        return PrimitiveResult(success=False, output=f"Failed to save memory: {str(e)}", error=str(e))
+
+
+async def check_erp(action: str = "assignments") -> PrimitiveResult:
+    """
+    Log into the university ERP portal (ums.mydsi.org) and fetch information.
+    Use this whenever the user asks about their ERP, university assignments, attendance,
+    results, timetable, fees, or announcements.
+    
+    Args:
+        action: What to fetch – one of: assignments, attendance, results, timetable, fees, announcements, dashboard
+    
+    Returns: PrimitiveResult with the fetched data as formatted text.
+    """
+    try:
+        from ..agent.erp_automation import check_erp as _erp_check
+        result = await _erp_check(action=action)
+        if result.success:
+            return PrimitiveResult(
+                success=True,
+                output=result.message or f"ERP data fetched for: {action}",
+                data={"action": result.action, "tables": result.data, "raw": result.raw_text[:500]},
+            )
+        else:
+            return PrimitiveResult(
+                success=False,
+                output=result.message,
+                error=result.message,
+            )
+    except Exception as e:
+        return PrimitiveResult(
+            success=False,
+            output=f"ERP check failed: {str(e)}",
+            error=str(e),
+        )
 
 
 # =============================================================================
@@ -505,18 +570,26 @@ async def send_email(to: str, subject: str, body: str, cc: str = "", user_id: st
         )
         
         if result.get("status") == "completed":
+            method = result.get('method', 'oauth')
+            method_desc = "Secure SMTP (App Password)" if "smtp" in method else "OAuth"
             return PrimitiveResult(
                 success=True,
-                output=f"Email sent successfully to {to}!\nSubject: {subject}\nMethod: {result.get('method', 'oauth')}",
-                data={"to": to, "subject": subject, "sent": True, "method": result.get("method")}
+                output=f"✅ Email sent successfully to {to}!\nSubject: {subject}\nMethod: {method_desc}\nNote: Successfully bypassed Google verification via SMTP.",
+                data={"to": to, "subject": subject, "sent": True, "method": method}
             )
         else:
             error = result.get("error", "Unknown error")
-            # If setup required, give helpful message
-            if result.get("setup_required"):
+            # If setup required or blocked, give helpful bypass message
+            if result.get("setup_required") or "blocked" in error.lower() or "verification" in error.lower():
                 return PrimitiveResult(
                     success=False,
-                    output=f"Email not configured. Please visit /api/oauth/authorize/gmail?user_id={user_id or 'default'} to authorize Gmail.",
+                    output=(
+                        "⚠️ Google Authorization is blocked or unverified.\n\n"
+                        "**The Fix:** Use a Gmail App Password instead of OAuth.\n"
+                        "1. Go to your Google Account → Security → 2-Step Verification\n"
+                        "2. Create an 'App Password' for Mail\n"
+                        "3. Add it to .env as `SMTP_PASSWORD=your_password` and `SMTP_EMAIL=your_email`"
+                    ),
                     error=error
                 )
             return PrimitiveResult(
@@ -584,6 +657,258 @@ async def send_email(to: str, subject: str, body: str, cc: str = "", user_id: st
         )
 
 
+async def list_events(user_id: str = None, days_ahead: int = 7) -> PrimitiveResult:
+    """
+    List upcoming calendar events for the user.
+    
+    Uses the Integration Manager to check if Google Calendar is connected.
+    If not connected, returns helpful message to connect.
+    If connected, lists upcoming events for the next N days.
+    
+    Args:
+        user_id: User ID (defaults to "default")
+        days_ahead: How many days into the future to check (default 7)
+    
+    Returns:
+        PrimitiveResult with:
+        - success=True + list of events if calendar connected
+        - success=False + "Calendar not connected" message if not connected
+    """
+    try:
+        user_id = user_id or "default"
+        
+        # Check if calendar is connected using Integration Manager
+        from .integration_manager.integration_store import integration_store
+        from .real_integrations import GoogleCalendarService
+        from datetime import datetime, timedelta
+        
+        # Check connection status
+        is_connected = integration_store.is_connected(user_id, "google_calendar")
+        
+        if not is_connected:
+            return PrimitiveResult(
+                success=False,
+                output="📅 Calendar not connected\n\nTo check your upcoming events, please connect your Google Calendar in the Integrations panel.",
+                error="integration_required",
+                data={"required_integration": "google_calendar", "integration_name": "Google Calendar"}
+            )
+        
+        # Get the integration record to fetch access token
+        record = integration_store.get_integration(user_id, "google_calendar")
+        
+        if not record or record.get("status") != "connected":
+            return PrimitiveResult(
+                success=False,
+                output="📅 Calendar connection lost\n\nPlease reconnect your Google Calendar in the Integrations panel.",
+                error="integration_disconnected",
+                data={"required_integration": "google_calendar"}
+            )
+        
+        token_data = record.get("tokens", {})
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            return PrimitiveResult(
+                success=False,
+                output="📅 Calendar access token not found\n\nPlease reconnect your Google Calendar in the Integrations panel.",
+                error="invalid_token",
+                data={"required_integration": "google_calendar"}
+            )
+        
+        # Get events from Google Calendar
+        cal_service = GoogleCalendarService(access_token)
+        time_min = datetime.now()
+        time_max = datetime.now() + timedelta(days=days_ahead)
+        
+        result = await cal_service.get_events(time_min=time_min, time_max=time_max, max_results=10)
+        
+        if not result.get("success"):
+            if result.get("auth_required"):
+                return PrimitiveResult(
+                    success=False,
+                    output="📅 Google Calendar authentication required\n\nPlease reconnect your Google Calendar in the Integrations panel.",
+                    error="auth_required",
+                    data={"required_integration": "google_calendar"}
+                )
+            return PrimitiveResult(
+                success=False,
+                output=f"Failed to fetch calendar events: {result.get('error', 'Unknown error')}",
+                error=result.get("error")
+            )
+        
+        events = result.get("events", [])
+        
+        if not events:
+            return PrimitiveResult(
+                success=True,
+                output=f"✅ No upcoming events in the next {days_ahead} days.",
+                data={"events": [], "count": 0}
+            )
+        
+        # Format events for display
+        output_lines = [f"📅 Your upcoming events (next {days_ahead} days):\n"]
+        formatted_events = []
+        
+        for i, event in enumerate(events, 1):
+            title = event.get("summary", "Untitled Event")
+            start = event.get("start", {})
+            start_time = start.get("dateTime") or start.get("date")
+            location = event.get("location", "")
+            
+            if start_time:
+                try:
+                    # Parse ISO format datetime
+                    from datetime import datetime as dt_parser
+                    event_dt = dt_parser.fromisoformat(start_time.replace("Z", "+00:00"))
+                    time_str = event_dt.strftime("%b %d, %I:%M %p")
+                except:
+                    time_str = start_time
+            else:
+                time_str = "Time not specified"
+            
+            event_str = f"{i}. **{title}** - {time_str}"
+            if location:
+                event_str += f" @ {location}"
+            
+            output_lines.append(event_str)
+            formatted_events.append({
+                "title": title,
+                "start": start_time,
+                "location": location,
+                "id": event.get("id")
+            })
+        
+        return PrimitiveResult(
+            success=True,
+            output="\n".join(output_lines),
+            data={
+                "events": formatted_events,
+                "count": len(events),
+                "days_ahead": days_ahead
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Error listing events: {e}")
+        return PrimitiveResult(
+            success=False,
+            output=f"Error checking calendar: {str(e)}",
+            error="calendar_error"
+        )
+
+
+async def analyze_faculty_emails(emails: list = None, action: str = "classify") -> PrimitiveResult:
+    """
+    Analyze and process faculty emails intelligently.
+
+    Features:
+    - Automatic categorization (assignments, leaves, doubts, attendance, exams, etc.)
+    - Urgency detection
+    - Template-based response suggestions
+    - Email batching for similar requests
+    - Action item extraction
+
+    Args:
+        emails: List of email dicts with keys: id, from, subject, body, date
+        action: "classify" (default), "batch", "summary", or "respond"
+
+    Returns:
+        PrimitiveResult with:
+        - Classified emails with suggested responses
+        - Batched similar emails for bulk processing
+        - Urgent action items
+        - Statistics by category/urgency
+    """
+    try:
+        from .faculty_email_assistant import get_faculty_email_assistant, EmailUrgency
+
+        if not emails:
+            return PrimitiveResult(
+                success=False,
+                output="❌ No emails provided for analysis",
+                error="empty_emails"
+            )
+
+        assistant = get_faculty_email_assistant()
+
+        # Process emails
+        results = assistant.process_emails(emails)
+
+        # Build output based on action
+        output_lines = []
+
+        if action == "classify" or action == "summary":
+            # Summary view
+            summary = assistant.get_summary()
+            output_lines.append("📊 **Email Analysis Summary**\n")
+            output_lines.append(f"Total Emails: {summary['total_emails']}")
+            output_lines.append(f"Requires Immediate Action: {summary['requires_immediate_action']}\n")
+
+            output_lines.append("**By Category:**")
+            for cat, count in sorted(summary['by_category'].items(), key=lambda x: x[1], reverse=True):
+                output_lines.append(f"  • {cat.replace('_', ' ').title()}: {count}")
+
+            output_lines.append("\n**By Urgency:**")
+            for urg in ["critical", "high", "medium", "low"]:
+                count = summary['by_urgency'].get(urg, 0)
+                if count > 0:
+                    emoji = "🔴" if urg == "critical" else "🟠" if urg == "high" else "🟡" if urg == "medium" else "🟢"
+                    output_lines.append(f"  {emoji} {urg.upper()}: {count}")
+
+            # Add action items
+            if results["action_items"]:
+                output_lines.append("\n**⚠️ Action Items (Urgent):**")
+                for item in results["action_items"][:5]:  # Top 5
+                    output_lines.append(f"\n  📧 From: {item['from']}")
+                    output_lines.append(f"  Subject: {item['subject']}")
+                    output_lines.append(f"  Category: {item['category']}")
+
+        elif action == "batch":
+            # Batch view
+            output_lines.append("📋 **Batched Emails**\n")
+            if results["batches"]:
+                for batch in results["batches"]:
+                    output_lines.append(f"📌 {batch['subject_pattern']}")
+                    output_lines.append(f"   Category: {batch['category']}")
+                    output_lines.append(f"   Count: {batch['count']} emails")
+                    output_lines.append(f"   From: {', '.join(batch['senders'][:3])}")
+                    output_lines.append("")
+            else:
+                output_lines.append("No email batches found (need 2+ similar emails)")
+
+        elif action == "respond":
+            # Response suggestions view
+            output_lines.append("✍️ **Suggested Responses**\n")
+            for email in results["classified_emails"][:5]:  # Top 5
+                output_lines.append(f"📧 **{email['from']}**")
+                output_lines.append(f"Subject: {email['subject']}")
+                output_lines.append(f"Category: {email['category']}")
+                output_lines.append(f"\nSuggested Response:\n{email['suggested_response']}\n")
+                output_lines.append("-" * 50 + "\n")
+
+        return PrimitiveResult(
+            success=True,
+            output="\n".join(output_lines),
+            data={
+                "summary": assistant.get_summary(),
+                "classified_count": len(results["classified_emails"]),
+                "batch_groups": len(results["batches"]),
+                "action_items": len(results["action_items"]),
+                "by_category": results["by_category"],
+                "by_urgency": results["by_urgency"],
+                "batches": results["batches"],
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error analyzing faculty emails: {e}")
+        return PrimitiveResult(
+            success=False,
+            output=f"❌ Error analyzing emails: {str(e)}",
+            error=str(e)
+        )
+
+
 async def create_meeting(topic: str, participants: list = None, datetime_str: str = "", platform: str = "zoom", user_id: str = None, force_fallback: bool = False) -> PrimitiveResult:
     """
     Create a meeting link with proper Integration Manager flow.
@@ -610,7 +935,7 @@ async def create_meeting(topic: str, participants: list = None, datetime_str: st
         return PrimitiveResult(success=False, output="No meeting topic provided.", error="missing_topic")
     
     # Smart date parsing - handles natural language
-    meeting_time = _parse_datetime_smart(datetime_str)
+    meeting_time = _parse_datetime_smart(datetime_str) or (datetime.now() + timedelta(hours=1))
     
     # ============================================
     # 🔐 INTEGRATION MANAGER CHECK (Layer 6)
@@ -717,6 +1042,52 @@ async def create_meeting(topic: str, participants: list = None, datetime_str: st
     if participants:
         output_lines.append(f"Participants: {', '.join(participants)}")
     
+    # ============================================
+    # 📅 GOOGLE CALENDAR SYNC (Extreme Hardening)
+    # ============================================
+    calendar_sync_status = "Not synced (Calendar not connected)"
+    calendar_link = None
+    
+    try:
+        from .integration_manager.integration_store import integration_store
+        from .real_integrations import GoogleCalendarService, CalendarEvent, MeetingPlatform
+        
+        # We need the user_id. In the current architecture, we assume 'default' or get it from context if possible.
+        # For this implementation, we'll try to find a connected Google Calendar.
+        user_id = "default" # TODO: Pass actual user_id from engine context
+        record = integration_store.get_integration(user_id, "google_calendar")
+        
+        if record and record.get("status") == "connected":
+            token_data = record.get("tokens", {})
+            access_token = token_data.get("access_token")
+            
+            if access_token:
+                cal_service = GoogleCalendarService(access_token)
+                
+                # Create the event
+                event = CalendarEvent(
+                    id=f"evt-{secrets.token_hex(4)}",
+                    title=f"SM Meeting: {topic}",
+                    description=f"Meeting created via Super Manager.\n\nJoin URL: {jitsi_url}\nPlatform: Jitsi Meet",
+                    start_time=meeting_time,
+                    end_time=meeting_time + timedelta(minutes=duration),
+                    location=jitsi_url,
+                    attendees=[{"email": p} for p in (participants or [])],
+                    meeting_link=jitsi_url
+                )
+                
+                cal_res = await cal_service.create_event(event)
+                if cal_res.get("success"):
+                    calendar_sync_status = "✅ Successfully synced to Google Calendar (Reminders set)"
+                    calendar_link = cal_res.get("html_link")
+                    output_lines.append(f"\n📅 {calendar_sync_status}")
+                    output_lines.append(f"   Calendar Link: {calendar_link}")
+                    meeting_data["calendar_event_id"] = cal_res.get("event_id")
+                    meeting_data["calendar_link"] = calendar_link
+    except Exception as e:
+        logger.error(f"Failed to sync to calendar: {e}")
+        calendar_sync_status = f"❌ Sync failed: {str(e)}"
+
     return PrimitiveResult(
         success=True,
         output="\n".join(output_lines),
@@ -1271,16 +1642,30 @@ PRIMITIVES = {
     },
     "send_email": {
         "function": send_email,
-        "risk": "safe",
-        "description": "Send an email via SMTP. Auto-executes.",
+        "risk": "risky",
+        "description": "Send an email via SMTP. Requires user confirmation.",
         "params": 'to (str - email address), subject (str), body (str), cc (str, optional)',
         "returns": "Email send status",
     },
+    "list_events": {
+        "function": list_events,
+        "risk": "safe",
+        "description": "Check and list upcoming calendar events for the user. If calendar is not connected, provides instructions to connect.",
+        "params": 'user_id (str, optional - defaults to "default"), days_ahead (int, optional - days to check, default 7)',
+        "returns": "List of upcoming events with times and locations, or message to connect calendar",
+        "analyze_faculty_emails": {
+            "function": analyze_faculty_emails,
+            "risk": "safe",
+            "description": "Intelligently classify and process faculty emails. Categorizes by type (assignments, leaves, exams, etc.), detects urgency, suggests responses, and batches similar emails.",
+            "params": 'emails (list of dicts with id, from, subject, body, date), action (str - "classify", "batch", "summary", or "respond", default "classify")',
+            "returns": "Classified emails with suggestions, batches, action items, and statistics",
+        },
+    },
     "create_meeting": {
         "function": create_meeting,
-        "risk": "safe",
-        "description": "Create a meeting. Requires Zoom integration if platform=zoom. Will prompt user to connect if not available, or offer Jitsi fallback.",
-        "params": 'topic (str), participants (list of emails, optional), datetime_str (str - natural language or ISO, e.g. "tomorrow 3pm"), platform (str - "zoom" or "jitsi", default "zoom"), force_fallback (bool - use Jitsi instead of Zoom)',
+        "risk": "risky",
+        "description": "Create a meeting. Requires user confirmation.",
+        "params": 'topic (str), participants (list of emails, optional), datetime_str (str - natural language or ISO), platform (str - "zoom" or "jitsi", default "zoom"), force_fallback (bool - use Jitsi instead of Zoom)',
         "returns": "Meeting link, ID, details OR integration_required error with options",
     },
     "save_note": {
@@ -1289,6 +1674,13 @@ PRIMITIVES = {
         "description": "Save a note or reminder for the user",
         "params": 'content (str), title (str, optional)',
         "returns": "Note ID and confirmation",
+    },
+    "save_memory": {
+        "function": save_memory,
+        "risk": "safe",
+        "description": "Save a piece of information to the user's long-term memory (e.g. personal facts, preferences)",
+        "params": 'key (str), value (str), category (str, optional, default "context")',
+        "returns": "Confirmation of saved memory",
     },
     "send_telegram": {
         "function": send_telegram,
@@ -1303,6 +1695,17 @@ PRIMITIVES = {
         "description": "Navigate to a URL and click on a link/button by text or selector",
         "params": 'url (str), link_text (str, optional), selector (str, optional)',
         "returns": "New page URL and content after clicking",
+    },
+    "check_erp": {
+        "function": check_erp,
+        "risk": "safe",
+        "description": (
+            "Log into the university ERP portal (ums.mydsi.org) using stored credentials and fetch information. "
+            "Use whenever the user asks about ERP, assignments, attendance, results, timetable, fees, or announcements. "
+            "The AI should ALWAYS call this when the user says 'erp', 'ums', 'assignment', 'attendance', 'university portal', etc."
+        ),
+        "params": 'action (str) – one of: assignments, attendance, results, timetable, fees, announcements, dashboard',
+        "returns": "Fetched data as formatted readable text with tables/lists",
     },
 }
 

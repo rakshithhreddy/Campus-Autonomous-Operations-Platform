@@ -167,8 +167,10 @@ def sample_user():
 def auth_headers():
     """Authentication headers for API requests"""
     return {
-        "Authorization": "Bearer test-token-12345",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-Dev-User-Id": "test-user-123",
+        "X-Dev-Tenant-Id": "test-tenant",
+        "X-Dev-Roles": "admin,user",
     }
 
 

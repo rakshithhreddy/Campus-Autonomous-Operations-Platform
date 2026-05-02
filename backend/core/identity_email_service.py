@@ -184,10 +184,11 @@ class IdentityEmailService:
         """
         # Get user credentials
         credentials = await self.get_user_email_credentials(user_id)
-        
-        # If no user credentials, try environment OAuth directly
+
+        # If no user credentials, defer to environment-based flow which
+        # itself will prefer SMTP when configured (see _send_via_env_oauth).
         if not credentials:
-            logger.info(f"No user credentials for {user_id}, using env OAuth")
+            logger.info(f"No user credentials for {user_id}, using env OAuth/SNTP fallback")
             return await self._send_via_env_oauth(
                 sender_email="",
                 to=to,
@@ -196,17 +197,48 @@ class IdentityEmailService:
                 html_body=html_body,
                 **kwargs
             )
-        
+
         if not credentials.get("can_send_email", True):
             return {
-                "status": "failed", 
+                "status": "failed",
                 "error": "Email sending is not enabled for this identity.",
             }
-        
-        auth_type = credentials.get("auth_type", "")
+
+        # Global preference to use SMTP first can be controlled via env var
+        prefer_smtp = os.getenv("PREFER_SMTP", "false").lower() == "true"
+
         sender_email = credentials.get("email", "")
-        
-        # Send based on auth type
+
+        # If SMTP is preferred, attempt SMTP first (user password -> env SMTP)
+        if prefer_smtp:
+            # If this identity has an app password, use it
+            if credentials.get("password"):
+                try:
+                    return await self._send_via_smtp(
+                        credentials, to, subject, body, html_body, **kwargs
+                    )
+                except Exception as e:
+                    logger.warning(f"Preferred user SMTP failed, falling back: {e}")
+
+            # Try environment SMTP / env OAuth fallback
+            try:
+                return await self._send_via_env_oauth(
+                    sender_email, to, subject, body, html_body, **kwargs
+                )
+            except Exception as e:
+                logger.warning(f"Env SMTP/OAuth fallback failed: {e}")
+
+            # If everything above failed, try OAuth as a last resort
+            auth_type = credentials.get("auth_type", "")
+            if auth_type == "oauth" and credentials.get("access_token"):
+                return await self._send_via_oauth(
+                    credentials, to, subject, body, html_body, **kwargs
+                )
+
+            return {"status": "failed", "error": "All email send methods failed"}
+
+        # Default behavior: OAuth first, then SMTP if password present, then env fallback
+        auth_type = credentials.get("auth_type", "")
         if auth_type == "oauth" and credentials.get("access_token"):
             return await self._send_via_oauth(
                 credentials, to, subject, body, html_body, **kwargs
@@ -216,7 +248,7 @@ class IdentityEmailService:
                 credentials, to, subject, body, html_body, **kwargs
             )
         else:
-            # Try falling back to env-based OAuth
+            # Try falling back to env-based OAuth/SMTP
             return await self._send_via_env_oauth(
                 sender_email, to, subject, body, html_body, **kwargs
             )
@@ -354,8 +386,35 @@ class IdentityEmailService:
         """Fallback to environment-based OAuth, then SMTP"""
         refresh_token = os.getenv("GMAIL_REFRESH_TOKEN", "")
         smtp_password = os.getenv("SMTP_PASSWORD", "") or os.getenv("GMAIL_APP_PASSWORD", "")
+        prefer_smtp = os.getenv("PREFER_SMTP", "false").lower() == "true"
         
-        # Try OAuth first
+        # If SMTP is preferred and available, use it first to bypass OAuth issues
+        if prefer_smtp and smtp_password:
+            try:
+                import smtplib
+                smtp_email = os.getenv("SMTP_EMAIL", "") or os.getenv("GMAIL_USER", "")
+                smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+                smtp_port = int(os.getenv("SMTP_PORT", "587"))
+                
+                message = self._create_message(
+                    smtp_email, to, subject, body, html_body, "AI Assistant"
+                )
+                
+                with smtplib.SMTP(smtp_server, smtp_port) as server:
+                    server.starttls()
+                    server.login(smtp_email, smtp_password)
+                    server.send_message(message)
+                
+                return {
+                    "status": "completed",
+                    "result": f"Email sent to {to}",
+                    "method": "env_smtp",
+                    "from": smtp_email,
+                }
+            except Exception as e:
+                logger.warning(f"Preferred SMTP failed, falling back to OAuth: {e}")
+        
+        # Try OAuth first (but catch blocked/unverified errors)
         if GOOGLE_API_AVAILABLE and refresh_token:
             try:
                 creds = Credentials(
@@ -366,7 +425,7 @@ class IdentityEmailService:
                     client_secret=os.getenv("GMAIL_CLIENT_SECRET", ""),
                 )
                 
-                # Refresh token
+                # Refresh token - this is where 403 access_denied usually hits
                 creds.refresh(Request())
                 
                 service = build('gmail', 'v1', credentials=creds)
@@ -427,7 +486,7 @@ class IdentityEmailService:
         
         return {
             "status": "failed",
-            "error": "No working email credentials. OAuth token may be expired. Run 'python scripts/get_gmail_refresh_token.py' to get a new token.",
+            "error": "No working email credentials. Google OAuth is blocked and no App Password was found. Please add SMTP_PASSWORD to your .env to bypass Google verification.",
             "setup_required": True,
         }
     

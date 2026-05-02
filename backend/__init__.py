@@ -2,4 +2,5 @@
 # Load .env FIRST before any module reads env vars
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env", override=True)

@@ -1,8 +1,11 @@
 import os
 import base64
+import hashlib
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.exceptions import InvalidTag
 from typing import Optional
+
+from ...config import get_settings
 
 class CryptoVault:
     """
@@ -11,16 +14,38 @@ class CryptoVault:
     """
     
     def __init__(self, master_key: Optional[bytes] = None):
-        # In a real environment, this should come from a secure KMS or env var.
-        # Fallback to a development key if not provided (NOT for production).
+        # Key source order:
+        # 1) ENCRYPTION_MASTER_KEY (base64-encoded 32 bytes)
+        # 2) explicit master_key argument (32 bytes)
+        # 3) development-only derived key for local/test environments
         env_key = os.environ.get("ENCRYPTION_MASTER_KEY")
+        app_env = (os.environ.get("APP_ENV") or os.environ.get("ENV") or "development").strip().lower()
+        is_dev_like = app_env in {"development", "dev", "testing", "test", "local"}
+
         if env_key:
-            self.key = base64.b64decode(env_key)
+            decoded = base64.b64decode(env_key)
+            if len(decoded) != 32:
+                raise ValueError("ENCRYPTION_MASTER_KEY must decode to exactly 32 bytes")
+            self.key = decoded
         elif master_key:
+            if len(master_key) != 32:
+                raise ValueError("master_key must be exactly 32 bytes")
             self.key = master_key
         else:
-            # 32 bytes for AES-256
-            self.key = b'01234567890123456789012345678901'
+            if not is_dev_like:
+                raise RuntimeError("ENCRYPTION_MASTER_KEY is required outside development/testing environments")
+            # Item 22: no random fallback \u2014 even dev needs explicit secret to prevent data loss on restart
+            seed_source = (
+                os.environ.get("ENCRYPTION_SECRET")
+                or os.environ.get("SECRET_KEY")
+                or get_settings().secret_key
+            )
+            if not seed_source:
+                raise RuntimeError(
+                    "ENCRYPTION_SECRET or SECRET_KEY is required even in development "
+                    "(prevents token data loss on server restart)"
+                )
+            self.key = hashlib.sha256(seed_source.encode("utf-8")).digest()
             
     def encrypt(self, plaintext: str) -> str:
         """Encrypt string using AES-256-GCM."""

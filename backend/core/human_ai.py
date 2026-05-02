@@ -22,6 +22,13 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+from .openai_compat import (
+    build_openai_compatible_url,
+    get_openai_compatible_api_key,
+    get_openai_compatible_model,
+)
+
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -255,6 +262,64 @@ Now respond as {personality.name} would - naturally, warmly, and humanly."""
 
 
 # ============================================================================
+# OPENAI-COMPAT API CLIENT (Kimi / OpenAI)
+# ============================================================================
+
+class OpenAICompatClient:
+    """Client for OpenAI-compatible chat completions (Kimi preferred via env)."""
+
+    def __init__(self):
+        self.api_key = get_openai_compatible_api_key()
+        self.model = get_openai_compatible_model()
+
+    async def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        json_mode: bool = False,
+    ) -> Optional[str]:
+        """Generate response using an OpenAI-compatible chat completions endpoint."""
+
+        if not self.api_key:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    build_openai_compatible_url("/chat/completions"),
+                    headers=headers,
+                    json=payload,
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    return result["choices"][0]["message"]["content"]
+
+                print(f"[OPENAI_COMPAT] Error: {response.status_code} - {response.text}")
+                return None
+
+        except Exception as e:
+            print(f"[OPENAI_COMPAT] Exception: {e}")
+            return None
+
+
+# ============================================================================
 # GROQ API CLIENT (Free Tier)
 # ============================================================================
 
@@ -266,7 +331,7 @@ class GroqFreeClient:
         self.base_url = "https://api.groq.com/openai/v1"
         self.model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # Free tier model
         self.fallback_model = "llama3-8b-8192"  # Smaller fallback
-        print(f"[GROQ_CLIENT] API Key: {self.api_key[:20] if self.api_key else 'NOT SET'}...")
+        print(f"[GROQ_CLIENT] Configured: {'yes' if self.api_key else 'no'}")
         print(f"[GROQ_CLIENT] Model: {self.model}")
         
     async def generate(
@@ -331,7 +396,7 @@ class OllamaFallbackClient:
     """Fallback to local Ollama when Groq fails"""
     
     def __init__(self):
-        self.base_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+        self.base_url = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_URL", "http://localhost:11434")
         self.model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
         
     async def generate(
@@ -394,15 +459,18 @@ class HumanAIManager:
         self.conversation_memory: List[Dict[str, Any]] = []
         self.user_context: Dict[str, Any] = {}
         
-        # AI providers
+        # AI providers (Kimi/OpenAI-compatible preferred)
+        self.openai_compat = OpenAICompatClient()
         self.groq = GroqFreeClient()
         self.ollama = OllamaFallbackClient()
         
         print(f"[HUMAN_AI] {self.personality.name} is ready to help!")
-        if self.groq.api_key:
+        if self.openai_compat.api_key:
+            print(f"[HUMAN_AI] Using OpenAI-compatible provider ({self.openai_compat.model})")
+        elif self.groq.api_key:
             print(f"[HUMAN_AI] Using Groq ({self.groq.model})")
         else:
-            print(f"[HUMAN_AI] Groq not configured, using Ollama fallback")
+            print(f"[HUMAN_AI] No cloud provider configured, using Ollama fallback")
     
     def _update_emotional_state(self, user_input: str):
         """Update emotional state based on user input"""
@@ -523,15 +591,22 @@ class HumanAIManager:
         # Add current input
         messages.append({"role": "user", "content": user_input})
         
-        # Try Groq first, then Ollama
-        response = await self.groq.generate(
+        # Try OpenAI-compatible (Kimi) first, then Groq, then Ollama
+        response = await self.openai_compat.generate(
             messages=messages,
             temperature=0.7 if not json_mode else 0.3,
             json_mode=json_mode
         )
         
         if not response:
-            print("[HUMAN_AI] Groq failed, trying Ollama...")
+            response = await self.groq.generate(
+                messages=messages,
+                temperature=0.7 if not json_mode else 0.3,
+                json_mode=json_mode
+            )
+        
+        if not response:
+            print("[HUMAN_AI] Cloud providers failed/not configured, trying Ollama...")
             response = await self.ollama.generate(
                 messages=messages,
                 temperature=0.7 if not json_mode else 0.3,

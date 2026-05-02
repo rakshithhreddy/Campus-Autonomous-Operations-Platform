@@ -284,6 +284,7 @@ class MeetingBookingFlow(AutomationFlow):
                 description="Sending meeting invitations",
                 action="send_email_invitations",
                 parameters={"participants": self.participants},
+                required=False,  # Meeting link should be returned even if email invitations fail
             ),
             FlowStep(
                 name="schedule_reminder",

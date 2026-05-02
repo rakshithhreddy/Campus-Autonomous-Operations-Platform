@@ -9,6 +9,7 @@ import {
   X
 } from 'lucide-react'
 import { apiUrl } from '../lib/apiBase'
+import { getDevAuthHeaders } from '../lib/authHeaders'
 import './OnboardingWizard.css'
 
 export default function OnboardingWizard({ userId, onComplete, onSkip }) {
@@ -33,16 +34,16 @@ export default function OnboardingWizard({ userId, onComplete, onSkip }) {
     try {
       const response = await fetch(apiUrl('/api/identity/setup'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
         body: JSON.stringify({
-          user_id: userId,
           email: email,
           app_password: appPassword,
           display_name: displayName
         })
       })
 
-      const data = await response.json()
+      let data = {}
+      try { data = await response.json() } catch (_) { data = { detail: `Server error (${response.status})` } }
 
       if (!response.ok) {
         throw new Error(data.detail || 'Setup failed')
@@ -83,7 +84,7 @@ export default function OnboardingWizard({ userId, onComplete, onSkip }) {
             <ol style={{ margin: 0, paddingLeft: '24px', color: '#cbd5e1', lineHeight: '1.6' }}>
               <li>Enable <strong>2-Step Verification</strong> on the Google Account.</li>
               <li>Go to <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" style={{ color: '#60a5fa', textDecoration: 'none' }}>Google App Passwords</a>.</li>
-              <li>Create a new password (Custom name: "Super Manager AI") and paste the 16-letter code below.</li>
+              <li>Create a new password (Custom name: "CAOP") and paste the 16-letter code below.</li>
             </ol>
           </div>
 

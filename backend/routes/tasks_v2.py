@@ -4,7 +4,7 @@ Task Orchestration API Routes
 Real-time task tracking with progress updates.
 """
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -12,6 +12,7 @@ import json
 
 from ..agent.orchestrator import get_orchestrator, TaskStatus
 from ..agent.scheduler import get_scheduler, start_scheduler
+from ..core.auth import get_current_principal, Principal
 
 router = APIRouter(prefix="/api/v2/tasks", tags=["tasks"])
 
@@ -55,40 +56,46 @@ class UserInputRequest(BaseModel):
 
 # =============================================================================
 # ENDPOINTS
+# NOTE: Fixed route ordering — specific paths (/notifications, /scheduler/*)
+# MUST be registered before the wildcard /{task_id} or FastAPI matches them
+# as task_id values and returns 404.
 # =============================================================================
 
 @router.post("", response_model=TaskResponse)
-async def create_task(request: CreateTaskRequest, user_id: str):
+async def create_task(
+    request: CreateTaskRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Create a new orchestrated task.
-    
+
     Task types:
     - schedule_meeting: Schedule a meeting with participants
     - send_email: Compose and send an email
     - set_reminder: Set a reminder for later
     - research: Research a topic
-    
+
     Returns the task with substeps and progress tracking.
     """
     try:
         orchestrator = get_orchestrator()
-        
+
         # Parse meeting start time if provided
         meeting_start_time = None
         if request.meeting_start_time:
             meeting_start_time = datetime.fromisoformat(request.meeting_start_time)
-        
+
         # Create the task
         task = await orchestrator.create_task(
-            user_id=user_id,
+            user_id=principal.user_id,
             task_type=request.task_type,
             params=request.params,
             meeting_start_time=meeting_start_time
         )
-        
+
         # Execute immediate steps
         task = await orchestrator.execute_task(task.id)
-        
+
         return TaskResponse(
             id=task.id,
             title=task.title,
@@ -101,7 +108,7 @@ async def create_task(request: CreateTaskRequest, user_id: str):
             input_prompt=task.input_prompt,
             created_at=task.created_at.isoformat()
         )
-        
+
     except Exception as e:
         print(f"[TASK API] Error creating task: {e}")
         import traceback
@@ -111,7 +118,7 @@ async def create_task(request: CreateTaskRequest, user_id: str):
 
 @router.get("", response_model=List[Dict])
 async def get_user_tasks(
-    user_id: str,
+    principal: Principal = Depends(get_current_principal),
     status: Optional[str] = None
 ):
     """
@@ -121,244 +128,68 @@ async def get_user_tasks(
     """
     try:
         orchestrator = get_orchestrator()
-        tasks = await orchestrator.get_user_tasks(user_id, status)
+        tasks = await orchestrator.get_user_tasks(principal.user_id, status)
         return tasks
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{task_id}")
-async def get_task(task_id: str):
-    """Get a specific task with all substeps"""
-    try:
-        orchestrator = get_orchestrator()
-        task = await orchestrator.get_task(task_id)
-        
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        
-        return task.to_dict()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.put("/{task_id}/substeps/{substep_id}")
-async def update_substep(task_id: str, substep_id: str, request: UpdateSubstepRequest):
-    """
-    Update a substep status (for webhooks or manual completion).
-    
-    Used when:
-    - Webhook confirms participant joined meeting
-    - User manually marks step as complete
-    - External event completes a step
-    """
-    try:
-        orchestrator = get_orchestrator()
-        
-        task = await orchestrator.complete_substep(
-            task_id=task_id,
-            substep_id=substep_id,
-            result=request.result or {}
-        )
-        
-        return task.to_dict()
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/{task_id}/input")
-async def provide_user_input(task_id: str, request: UserInputRequest):
-    """
-    Provide user input for a task that requires it.
-    
-    Some tasks may pause and ask for user confirmation or choice.
-    This endpoint provides that input and continues the task.
-    """
-    try:
-        orchestrator = get_orchestrator()
-        task = await orchestrator.get_task(task_id)
-        
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        
-        # Store the input
-        task.user_input_received = request.input_value
-        task.needs_user_input = False
-        
-        if request.continue_task:
-            # Continue executing the task
-            task = await orchestrator.execute_task(task_id)
-        
-        return task.to_dict()
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/{task_id}/cancel")
-async def cancel_task(task_id: str):
-    """Cancel a task and all pending substeps"""
-    try:
-        orchestrator = get_orchestrator()
-        task = await orchestrator.get_task(task_id)
-        
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        
-        task.status = TaskStatus.CANCELLED
-        
-        # Save to database
-        if orchestrator.client:
-            orchestrator.client.table("orchestrated_tasks").update({
-                "status": "cancelled"
-            }).eq("id", task_id).execute()
-        
-        return {"status": "cancelled", "task_id": task_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 # =============================================================================
-# JITSI WEBHOOK ENDPOINT
-# =============================================================================
-
-@router.post("/webhooks/jitsi")
-async def jitsi_webhook(payload: Dict[str, Any]):
-    """
-    Webhook endpoint for Jitsi events.
-    
-    Events:
-    - PARTICIPANT_JOINED: A participant joined the meeting
-    - PARTICIPANT_LEFT: A participant left the meeting
-    - CONFERENCE_ENDED: The meeting ended
-    """
-    try:
-        event_type = payload.get("eventType") or payload.get("event")
-        room_name = payload.get("roomName") or payload.get("room")
-        participant = payload.get("participant", {})
-        
-        print(f"[JITSI WEBHOOK] Event: {event_type}, Room: {room_name}")
-        
-        orchestrator = get_orchestrator()
-        
-        if orchestrator.client:
-            # Find meeting by room name (meeting link contains room)
-            result = orchestrator.client.table("meetings").select("*").ilike(
-                "meeting_link", f"%{room_name}%"
-            ).execute()
-            
-            if result.data:
-                meeting = result.data[0]
-                meeting_id = meeting["id"]
-                
-                if event_type in ["PARTICIPANT_JOINED", "participant_joined"]:
-                    # Update participant status
-                    orchestrator.client.table("meeting_participants").update({
-                        "joined": True,
-                        "joined_at": datetime.utcnow().isoformat()
-                    }).eq("meeting_id", meeting_id).eq(
-                        "participant_name", participant.get("name", "")
-                    ).execute()
-                    
-                    # Find and complete the "participant joins" substep
-                    task_result = orchestrator.client.table("orchestrated_tasks").select("*").eq(
-                        "meeting_id", meeting_id
-                    ).execute()
-                    
-                    if task_result.data:
-                        task = task_result.data[0]
-                        substeps = orchestrator.client.table("task_substeps").select("*").eq(
-                            "task_id", task["id"]
-                        ).eq("action_type", "detect_join").execute()
-                        
-                        if substeps.data:
-                            await orchestrator.complete_substep(
-                                task["id"],
-                                substeps.data[0]["id"],
-                                {"participant": participant}
-                            )
-                
-                elif event_type in ["CONFERENCE_ENDED", "conference_ended"]:
-                    # Complete the meeting
-                    orchestrator.client.table("meetings").update({
-                        "status": "completed",
-                        "end_time": datetime.utcnow().isoformat()
-                    }).eq("id", meeting_id).execute()
-                    
-                    # Find and complete the "meeting completes" substep
-                    task_result = orchestrator.client.table("orchestrated_tasks").select("*").eq(
-                        "meeting_id", meeting_id
-                    ).execute()
-                    
-                    if task_result.data:
-                        task = task_result.data[0]
-                        substeps = orchestrator.client.table("task_substeps").select("*").eq(
-                            "task_id", task["id"]
-                        ).eq("action_type", "detect_completion").execute()
-                        
-                        if substeps.data:
-                            await orchestrator.complete_substep(
-                                task["id"],
-                                substeps.data[0]["id"],
-                                {"ended_at": datetime.utcnow().isoformat()}
-                            )
-        
-        return {"status": "received"}
-        
-    except Exception as e:
-        print(f"[JITSI WEBHOOK] Error: {e}")
-        return {"status": "error", "message": str(e)}
-
-
-# =============================================================================
-# NOTIFICATIONS
+# NOTIFICATIONS  (must be before /{task_id} to avoid route collision)
 # =============================================================================
 
 @router.get("/notifications")
-async def get_notifications(user_id: str, unread_only: bool = True):
+async def get_notifications(
+    unread_only: bool = True,
+    principal: Principal = Depends(get_current_principal),
+):
     """Get notifications for a user"""
     try:
         orchestrator = get_orchestrator()
 
         if orchestrator.client:
-            query = orchestrator.client.table("notifications").select("*").eq("user_id", user_id)
+            query = orchestrator.client.table("notifications").select("*").eq("user_id", principal.user_id)
             if unread_only:
                 query = query.eq("is_read", False)
-            
+
             result = query.order("created_at", desc=True).limit(50).execute()
             return result.data or []
-        
+
         return []
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Gracefully return empty list — notifications are non-critical
+        return []
 
 
 @router.put("/notifications/{notification_id}/read")
-async def mark_notification_read(notification_id: str):
+async def mark_notification_read(
+    notification_id: str,
+    principal: Principal = Depends(get_current_principal),
+):
     """Mark a notification as read"""
     try:
         orchestrator = get_orchestrator()
-        
+
         if orchestrator.client:
+            result = orchestrator.client.table("notifications").select("user_id").eq("id", notification_id).limit(1).execute()
+            owner = (result.data or [{}])[0].get("user_id") if result else None
+            if owner and owner != principal.user_id:
+                raise HTTPException(status_code=403, detail="Forbidden")
+
             orchestrator.client.table("notifications").update({
                 "is_read": True,
                 "read_at": datetime.utcnow().isoformat()
             }).eq("id", notification_id).execute()
-        
+
         return {"status": "marked_read"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
-# SCHEDULER CONTROL
+# SCHEDULER CONTROL  (must be before /{task_id} to avoid route collision)
 # =============================================================================
 
 @router.post("/scheduler/start")
@@ -379,3 +210,225 @@ async def scheduler_status():
         "running": scheduler.is_running,
         "jobs": len(scheduler.scheduler.get_jobs()) if scheduler.scheduler else 0
     }
+
+
+# =============================================================================
+# JITSI WEBHOOK ENDPOINT  (must be before /{task_id} to avoid route collision)
+# =============================================================================
+
+@router.post("/webhooks/jitsi")
+async def jitsi_webhook(payload: Dict[str, Any]):
+    """
+    Webhook endpoint for Jitsi events.
+
+    Events:
+    - PARTICIPANT_JOINED: A participant joined the meeting
+    - PARTICIPANT_LEFT: A participant left the meeting
+    - CONFERENCE_ENDED: The meeting ended
+    """
+    try:
+        event_type = payload.get("eventType") or payload.get("event")
+        room_name = payload.get("roomName") or payload.get("room")
+        participant = payload.get("participant", {})
+
+        print(f"[JITSI WEBHOOK] Event: {event_type}, Room: {room_name}")
+
+        orchestrator = get_orchestrator()
+
+        if orchestrator.client:
+            # Find meeting by room name (meeting link contains room)
+            result = orchestrator.client.table("meetings").select("*").ilike(
+                "meeting_link", f"%{room_name}%"
+            ).execute()
+
+            if result.data:
+                meeting = result.data[0]
+                meeting_id = meeting["id"]
+
+                if event_type in ["PARTICIPANT_JOINED", "participant_joined"]:
+                    # Update participant status
+                    orchestrator.client.table("meeting_participants").update({
+                        "joined": True,
+                        "joined_at": datetime.utcnow().isoformat()
+                    }).eq("meeting_id", meeting_id).eq(
+                        "participant_name", participant.get("name", "")
+                    ).execute()
+
+                    # Find and complete the "participant joins" substep
+                    task_result = orchestrator.client.table("orchestrated_tasks").select("*").eq(
+                        "meeting_id", meeting_id
+                    ).execute()
+
+                    if task_result.data:
+                        task = task_result.data[0]
+                        substeps = orchestrator.client.table("task_substeps").select("*").eq(
+                            "task_id", task["id"]
+                        ).eq("action_type", "detect_join").execute()
+
+                        if substeps.data:
+                            await orchestrator.complete_substep(
+                                task["id"],
+                                substeps.data[0]["id"],
+                                {"participant": participant}
+                            )
+
+                elif event_type in ["CONFERENCE_ENDED", "conference_ended"]:
+                    # Complete the meeting
+                    orchestrator.client.table("meetings").update({
+                        "status": "completed",
+                        "end_time": datetime.utcnow().isoformat()
+                    }).eq("id", meeting_id).execute()
+
+                    # Find and complete the "meeting completes" substep
+                    task_result = orchestrator.client.table("orchestrated_tasks").select("*").eq(
+                        "meeting_id", meeting_id
+                    ).execute()
+
+                    if task_result.data:
+                        task = task_result.data[0]
+                        substeps = orchestrator.client.table("task_substeps").select("*").eq(
+                            "task_id", task["id"]
+                        ).eq("action_type", "detect_completion").execute()
+
+                        if substeps.data:
+                            await orchestrator.complete_substep(
+                                task["id"],
+                                substeps.data[0]["id"],
+                                {"ended_at": datetime.utcnow().isoformat()}
+                            )
+
+        return {"status": "received"}
+
+    except Exception as e:
+        print(f"[JITSI WEBHOOK] Error: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+# =============================================================================
+# TASK-SPECIFIC ENDPOINTS  (wildcard — must be LAST to avoid swallowing
+# fixed path segments like /notifications, /scheduler, /webhooks)
+# =============================================================================
+
+@router.get("/{task_id}")
+async def get_task(
+    task_id: str,
+    principal: Principal = Depends(get_current_principal),
+):
+    """Get a specific task with all substeps"""
+    try:
+        orchestrator = get_orchestrator()
+        task = await orchestrator.get_task(task_id)
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if getattr(task, "user_id", None) and task.user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        return task.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{task_id}/substeps/{substep_id}")
+async def update_substep(
+    task_id: str,
+    substep_id: str,
+    request: UpdateSubstepRequest,
+    principal: Principal = Depends(get_current_principal),
+):
+    """
+    Update a substep status (for webhooks or manual completion).
+
+    Used when:
+    - Webhook confirms participant joined meeting
+    - User manually marks step as complete
+    - External event completes a step
+    """
+    try:
+        orchestrator = get_orchestrator()
+
+        task_obj = await orchestrator.get_task(task_id)
+        if not task_obj:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if getattr(task_obj, "user_id", None) and task_obj.user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        task = await orchestrator.complete_substep(
+            task_id=task_id,
+            substep_id=substep_id,
+            result=request.result or {}
+        )
+
+        return task.to_dict()
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{task_id}/input")
+async def provide_user_input(
+    task_id: str,
+    request: UserInputRequest,
+    principal: Principal = Depends(get_current_principal),
+):
+    """
+    Provide user input for a task that requires it.
+
+    Some tasks may pause and ask for user confirmation or choice.
+    This endpoint provides that input and continues the task.
+    """
+    try:
+        orchestrator = get_orchestrator()
+        task = await orchestrator.get_task(task_id)
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if getattr(task, "user_id", None) and task.user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        # Store the input
+        task.user_input_received = request.input_value
+        task.needs_user_input = False
+
+        if request.continue_task:
+            # Continue executing the task
+            task = await orchestrator.execute_task(task_id)
+
+        return task.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{task_id}/cancel")
+async def cancel_task(
+    task_id: str,
+    principal: Principal = Depends(get_current_principal),
+):
+    """Cancel a task and all pending substeps"""
+    try:
+        orchestrator = get_orchestrator()
+        task = await orchestrator.get_task(task_id)
+
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if getattr(task, "user_id", None) and task.user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        task.status = TaskStatus.CANCELLED
+
+        # Save to database
+        if orchestrator.client:
+            orchestrator.client.table("orchestrated_tasks").update({
+                "status": "cancelled"
+            }).eq("id", task_id).execute()
+
+        return {"status": "cancelled", "task_id": task_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

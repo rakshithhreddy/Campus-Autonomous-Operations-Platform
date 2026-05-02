@@ -12,11 +12,14 @@ Supported Channels:
 
 import os
 import logging
-import hmac
-import hashlib
+import time
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
+from fastapi.responses import Response
 from pydantic import BaseModel
+
+from ..core.webhook_security import verify_telegram_secret_token, verify_twilio_signature, verify_webhook_replay
+from ..core.openai_compat import build_openai_compatible_url, get_openai_compatible_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +71,21 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
     if not TELEGRAM_BOT_TOKEN:
         logger.warning("[Telegram] Bot token not configured")
         return {"ok": True}  # Return 200 to avoid Telegram retries
+
+    if TELEGRAM_SECRET:
+        received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+        if not verify_telegram_secret_token(received_secret, TELEGRAM_SECRET):
+            raise HTTPException(status_code=401, detail="Invalid Telegram webhook signature")
     
     try:
         payload = await request.json()
         logger.info(f"[Telegram] Received update: {payload.get('update_id')}")
+
+        update_id = payload.get("update_id")
+        if update_id is not None:
+            replay_ok = verify_webhook_replay(nonce=f"telegram:{update_id}", timestamp=int(time.time()))
+            if not replay_ok:
+                raise HTTPException(status_code=401, detail="Telegram webhook replay detected")
         
         # Extract message
         message = payload.get("message") or payload.get("edited_message")
@@ -221,6 +235,18 @@ async def whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
         body = form_data.get("Body", "")
         message_sid = form_data.get("MessageSid", "")
         num_media = int(form_data.get("NumMedia", "0"))
+
+        if TWILIO_AUTH_TOKEN:
+            signature = request.headers.get("X-Twilio-Signature", "")
+            form_payload = {key: str(value) for key, value in form_data.items()}
+            if not verify_twilio_signature(str(request.url), form_payload, signature, TWILIO_AUTH_TOKEN):
+                raise HTTPException(status_code=401, detail="Invalid Twilio webhook signature")
+
+        replay_timestamp_header = request.headers.get("X-Twilio-Request-Timestamp")
+        replay_timestamp = int(replay_timestamp_header) if replay_timestamp_header and replay_timestamp_header.isdigit() else int(time.time())
+        replay_nonce = f"twilio:{message_sid or from_number}:{replay_timestamp}"
+        if not verify_webhook_replay(nonce=replay_nonce, timestamp=replay_timestamp):
+            raise HTTPException(status_code=401, detail="Twilio webhook replay detected")
         
         # Extract phone number
         phone = from_number.replace("whatsapp:", "")
@@ -332,7 +358,7 @@ async def transcribe_voice(request: Request):
     
     This enables voice input for the Input Layer.
     """
-    openai_key = os.getenv("OPENAI_API_KEY", "")
+    openai_key = get_openai_compatible_api_key()
     
     if not openai_key:
         raise HTTPException(status_code=503, detail="Voice transcription not configured")
@@ -354,7 +380,7 @@ async def transcribe_voice(request: Request):
         # Call OpenAI Whisper API
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "https://api.openai.com/v1/audio/transcriptions",
+                build_openai_compatible_url("/audio/transcriptions"),
                 headers={"Authorization": f"Bearer {openai_key}"},
                 files={"file": (filename, content)},
                 data={"model": "whisper-1"},
@@ -426,7 +452,7 @@ async def messaging_status():
             "number": os.getenv("TWILIO_WHATSAPP_NUMBER", "not set")
         },
         "voice": {
-            "configured": bool(os.getenv("OPENAI_API_KEY")),
+            "configured": bool(get_openai_compatible_api_key()),
             "model": "whisper-1"
         }
     }

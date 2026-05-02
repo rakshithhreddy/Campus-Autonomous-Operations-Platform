@@ -85,16 +85,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if self.enable_hsts:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         
-        # Content Security Policy
+        # Content Security Policy (Item 21: hardened — no unsafe-eval, nonce for scripts)
         if self.enable_csp:
+            import secrets as _secrets
+            nonce = _secrets.token_urlsafe(16)
+            # Attach nonce to request state so templates can use it
+            try:
+                request.state.csp_nonce = nonce
+            except Exception:
+                pass
             csp = (
-                "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+                f"default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}'; "
                 "style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data: https:; "
-                "font-src 'self' data:; "
+                "font-src 'self' data: https://fonts.gstatic.com https://fonts.googleapis.com; "
                 "connect-src 'self' https: wss:; "
-                "frame-ancestors 'none';"
+                "frame-ancestors 'none'; "
+                "base-uri 'self'; "
+                "object-src 'none';"
             )
             response.headers["Content-Security-Policy"] = csp
         
@@ -205,14 +214,14 @@ class IPRateLimiter:
     def check_and_record(self, ip: str) -> tuple[bool, Optional[str]]:
         """
         Check if request is allowed and record it
-        
+
         Returns: (allowed, reason)
         """
         if ip in self.config.whitelist:
             return True, None
-        
+
         now = time.time()
-        
+
         with self._lock:
             # Check if blocked
             if ip in self._blocked_ips:

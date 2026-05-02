@@ -7,15 +7,23 @@ Endpoints for OAuth 2.0 flows:
 - Manage user tokens
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
 import logging
 
+from ..core.auth import get_current_principal, Principal
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
+
+
+def _require_principal_user(principal: Principal, supplied_user_id: Optional[str] = None) -> str:
+    if supplied_user_id and supplied_user_id != principal.user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return principal.user_id
 
 # Import OAuth manager
 try:
@@ -34,7 +42,6 @@ except ImportError as e:
 
 class OAuthInitRequest(BaseModel):
     """Request to initiate OAuth flow"""
-    user_id: str = Field(..., description="User identifier")
     service: str = Field(..., description="Service name (gmail, zoom, etc.)")
     extra_scopes: Optional[List[str]] = Field(default=None, description="Additional OAuth scopes")
 
@@ -62,7 +69,7 @@ async def get_oauth_status():
 
 
 @router.post("/initiate")
-async def initiate_oauth(request_data: OAuthInitRequest, request: Request):
+async def initiate_oauth(request_data: OAuthInitRequest, request: Request, principal: Principal = Depends(get_current_principal)):
     """
     Initiate OAuth flow for a service.
     
@@ -89,7 +96,7 @@ async def initiate_oauth(request_data: OAuthInitRequest, request: Request):
         
     try:
         auth_url, state = manager.get_authorization_url(
-            user_id=request_data.user_id,
+            user_id=principal.user_id,
             service=service,
             extra_scopes=request_data.extra_scopes,
             override_redirect_uri=redirect_uri
@@ -112,7 +119,8 @@ async def initiate_oauth(request_data: OAuthInitRequest, request: Request):
 async def authorize_service(
     service: str,
     request: Request,
-    user_id: str = Query(..., description="User identifier")
+    user_id: str = Query(None, description="User identifier"),
+    principal: Principal = Depends(get_current_principal)
 ):
     """
     Start OAuth flow and redirect to provider.
@@ -134,6 +142,7 @@ async def authorize_service(
     if oauth_service == OAuthService.ZOOM:
         redirect_uri = f"{base_url}/api/oauth/callback/zoom"
         
+    user_id = _require_principal_user(principal, user_id)
     auth_url, state = manager.get_authorization_url(user_id, oauth_service, override_redirect_uri=redirect_uri)
     
     return RedirectResponse(url=auth_url)
@@ -173,18 +182,24 @@ async def oauth_callback(
         token = await manager.exchange_code(state, code)
         
         if token:
-            # Persist the connection into the Integrations store so the UI can reflect it
+            if not (token.user_id or "").strip():
+                return HTMLResponse(content=_error_html("OAuth callback missing user binding"), status_code=400)
+
+            # Safety belt: OAuthManager._save_token already persists to
+            # IntegrationStore (Supabase), but we call again here in case
+            # that path encounters an error.  The upsert makes this idempotent.
             try:
                 from ..core.integration_manager.integration_store import integration_store
 
                 integration_store.connect_integration(
-                    user_id=token.user_id or "default",
+                    user_id=token.user_id,
                     service=token.service,
                     access_token=token.access_token,
                     refresh_token=token.refresh_token,
                     scopes=token.scopes,
                     expires_at=token.expires_at.isoformat() if token.expires_at else None,
                 )
+                logger.info(f"OAuth callback: integration persisted for {token.service} / {token.user_id}")
             except Exception as e:
                 logger.warning(f"OAuth token stored but integration registry update failed: {e}")
 
@@ -193,11 +208,15 @@ async def oauth_callback(
                 email=token.user_email,
             ))
         else:
+            # Check if there's a more specific error in logs or state
+            error_detail = "Failed to exchange authorization code. This often means the Client Secret in your .env is incorrect or the Redirect URI doesn't match the Google Console."
             return HTMLResponse(
-                content=_error_html("Failed to exchange authorization code"),
+                content=_error_html(error_detail),
                 status_code=400
             )
             
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"OAuth callback error: {e}")
         return HTMLResponse(
@@ -219,7 +238,8 @@ async def zoom_oauth_callback(
 @router.get("/token/{service}")
 async def get_oauth_token_status(
     service: str,
-    user_id: str = Query(..., description="User identifier")
+    user_id: str = Query(None, description="User identifier"),
+    principal: Principal = Depends(get_current_principal)
 ) -> OAuthStatusResponse:
     """
     Check OAuth token status for a service.
@@ -233,6 +253,7 @@ async def get_oauth_token_status(
         raise HTTPException(status_code=400, detail=f"Unsupported service: {service}")
     
     manager = get_oauth_manager()
+    user_id = _require_principal_user(principal, user_id)
     token = await manager.get_valid_token(user_id, oauth_service)
     
     if token:
@@ -251,11 +272,12 @@ async def get_oauth_token_status(
 
 
 @router.get("/tokens")
-async def get_all_oauth_tokens(user_id: str = Query(...)):
+async def get_all_oauth_tokens(user_id: str = Query(None), principal: Principal = Depends(get_current_principal)):
     """Get status of all OAuth connections for a user"""
     if not OAUTH_AVAILABLE:
         raise HTTPException(status_code=503, detail="OAuth not available")
     
+    user_id = _require_principal_user(principal, user_id)
     manager = get_oauth_manager()
     results = {}
     
@@ -275,7 +297,8 @@ async def get_all_oauth_tokens(user_id: str = Query(...)):
 @router.delete("/token/{service}")
 async def revoke_oauth_token(
     service: str,
-    user_id: str = Query(..., description="User identifier")
+    user_id: str = Query(None, description="User identifier"),
+    principal: Principal = Depends(get_current_principal)
 ):
     """
     Revoke OAuth token for a service.
@@ -288,6 +311,7 @@ async def revoke_oauth_token(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Unsupported service: {service}")
     
+    user_id = _require_principal_user(principal, user_id)
     manager = get_oauth_manager()
     success = await manager.revoke_token(user_id, oauth_service)
     
@@ -419,14 +443,14 @@ def _setup_guide_html(base_url: str) -> str:
         <span class="step-number">3</span>
         <strong>Authorize Gmail</strong>
         <p>Click the button below to authorize Super Manager to send emails on your behalf:</p>
-        <a href="/api/oauth/authorize/gmail?user_id=default" class="btn">🔗 Authorize Gmail</a>
+        <a href="/api/oauth/authorize/gmail" class="btn">🔗 Authorize Gmail</a>
     </div>
     
     <div class="step">
         <span class="step-number">4</span>
         <strong>Test Email</strong>
         <p>After authorization, test sending an email:</p>
-        <pre>POST /api/automation/quick/email?user_id=default&to=you@example.com&subject=Test&body=Hello</pre>
+        <pre>POST /api/automation/quick/email?to=you@example.com&subject=Test&body=Hello</pre>
     </div>
     
     <h2>Alternative: App Password (SMTP)</h2>
@@ -462,7 +486,7 @@ SMTP_EMAIL=your-gmail@gmail.com</pre>
     
     <div class="success">
         <strong>✅ Current Status</strong>
-        <p>Check your current OAuth status: <a href="/api/oauth/token/gmail?user_id=default">/api/oauth/token/gmail?user_id=default</a></p>
+        <p>Check your current OAuth status from the authenticated UI session or the integrations panel.</p>
         <p>Full system status: <a href="/api/status">/api/status</a></p>
     </div>
 </body>

@@ -59,8 +59,12 @@ class ToolRegistry:
                 req_int = "gmail"
             elif name == "create_meeting":
                 req_int = "zoom"  # Zoom integration required for Zoom meetings
+            elif name == "list_events":
+                req_int = "google_calendar"  # Google Calendar required to check events
             elif name == "send_telegram":
                 req_int = None  # Telegram works without integration (bot token in env)
+            elif name == "analyze_faculty_emails":
+                req_int = "gmail"  # Gmail required to fetch emails
             
             self.register(ToolDef(
                 name=name,
@@ -197,6 +201,13 @@ class ToolRegistry:
                 )
 
         try:
+            # Inject user_id from context if supported by the handler
+            if (context or {}).get("user_id"):
+                import inspect
+                sig = inspect.signature(tool.handler)
+                if "user_id" in sig.parameters:
+                    params["user_id"] = context["user_id"]
+
             result = await tool.handler(**params)
             if isinstance(result, PrimitiveResult):
                 return result

@@ -36,7 +36,7 @@ import json
 import logging
 
 # Primary brain - brain.py (ReAct agent with streaming)
-from ..core.brain import chat, get_history, save_user_data, get_user_data, brain
+from ..core.brain import chat, get_history, save_user_data, get_user_data, get_session, brain
 
 # Optional: unified brain for capabilities endpoint
 try:
@@ -53,6 +53,7 @@ from ..core.validation import (
     sanitize_html,
     validate_session_id
 )
+from ..core.auth import get_current_principal, Principal
 
 import re
 
@@ -558,7 +559,7 @@ render();
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10000)
     session_id: Optional[str] = Field(None, max_length=100)
-    user_id: Optional[str] = Field(None, max_length=100)  # User ID for identity lookup
+    # user_id intentionally removed — always derived from authenticated principal (Item 3)
     
     @validator('message')
     def clean_message(cls, v):
@@ -593,7 +594,7 @@ class ButtonActionRequest(BaseModel):
     button_id: str = Field(..., min_length=1, max_length=100)
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
     session_id: str = Field(..., min_length=1, max_length=100)
-    user_id: Optional[str] = Field(None, max_length=100)
+    # user_id intentionally removed — derived from principal (Item 3)
 
 
 class UserDataRequest(BaseModel):
@@ -614,7 +615,7 @@ class ErrorResponse(BaseModel):
 
 class FeedbackRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=100)
-    user_id: Optional[str] = Field(None, max_length=100)
+    # user_id intentionally removed — derived from principal (Item 3)
     message_index: int = Field(..., ge=0)
     rating: str = Field(..., pattern=r"^(positive|negative)$")
     comment: Optional[str] = Field(None, max_length=500)
@@ -675,6 +676,7 @@ async def check_rate_limit(request: Request):
 async def chat_endpoint(
     request: ChatRequest,
     raw_request: Request,
+    principal: Principal = Depends(get_current_principal),
     _: None = Depends(check_rate_limit)
 ):
     """
@@ -688,13 +690,13 @@ async def chat_endpoint(
     """
     start_time = time.time()
     session_id = request.session_id or str(uuid.uuid4())
-    user_id = request.user_id or "default"
+    user_id = principal.user_id
 
     # Support continuing an existing task with `/TASK_ID your message...`.
     # This keeps the same session_id so the agent has full conversation memory.
     parent_task_id = None
     message = request.message or ""
-    m = re.match(r"^\s*/(?P<task_id>[0-9a-fA-F\-]{36})\b\s*(?P<rest>.*)$", message)
+    m = re.match(r"^\s*/(?P<task_id>[a-zA-Z0-9\-_]+)\s*(?P<rest>.*)$", message, re.DOTALL)
     if m:
         parent_task_id = m.group("task_id")
         message = (m.group("rest") or "").strip() or message
@@ -708,6 +710,21 @@ async def chat_endpoint(
                     session_id = task_session.strip()
         except Exception:
             pass
+            
+    # Auto-link to last active task in session if not explicitly provided
+    if not parent_task_id:
+        try:
+            from ..agent.orchestrator import get_orchestrator
+            orchestrator = get_orchestrator()
+            user_tasks = await orchestrator.get_user_tasks(user_id)
+            if user_tasks:
+                # Find most recent task associated with this session
+                session_tasks = [t for t in user_tasks if (t.get("metadata") or {}).get("session_id") == session_id]
+                if session_tasks:
+                    parent_task_id = session_tasks[0]["id"]
+        except Exception:
+            pass
+
     
     try:
         # Log the request (without full message for privacy)
@@ -736,6 +753,32 @@ async def chat_endpoint(
 
         # Similar safety-net for simple todo web apps.
         message_text = _inject_todo_app_artifacts_if_missing(request.message, message_text, result)
+
+        # ----------------------------------------------------------------
+        # AUTO-DETECT STUDENT FOLLOW-UP REQUESTS
+        # If the faculty message contains student data (email + attendance)
+        # AND intent to follow up, auto-create a background campaign.
+        # ----------------------------------------------------------------
+        try:
+            from ..core.student_followup_engine import parse_student_data, create_student_followup
+            _msg_lower = message.lower()
+            _has_intent = any(k in _msg_lower for k in [
+                "follow up", "follow-up", "focus on him", "focus on her",
+                "send email", "contact student", "attendance", "absent",
+                "remind", "send mail", "email to student"
+            ])
+            _parsed = parse_student_data(message) if _has_intent else None
+            if _parsed:
+                async def _bg_followup():
+                    try:
+                        await create_student_followup(user_id=user_id, raw_text=message)
+                        logger.info(f"Auto-started followup campaign for {_parsed.get('student_email')} by {user_id}")
+                    except Exception as _bge:
+                        logger.warning(f"Background followup failed: {_bge}")
+                import asyncio
+                asyncio.create_task(_bg_followup())
+        except Exception as _sfe:
+            logger.debug(f"Student followup detection skipped: {_sfe}")
         
         response_time = (time.time() - start_time) * 1000
         
@@ -780,6 +823,7 @@ async def chat_endpoint(
 async def chat_stream_endpoint(
     request: ChatRequest,
     raw_request: Request,
+    principal: Principal = Depends(get_current_principal),
     _: None = Depends(check_rate_limit)
 ):
     """
@@ -787,7 +831,7 @@ async def chat_stream_endpoint(
     Yields real-time agent events: thinking, tool_call, tool_result, answer.
     """
     session_id = request.session_id or str(uuid.uuid4())
-    user_id = request.user_id or "default"
+    user_id = principal.user_id
 
     async def generate():
         try:
@@ -817,7 +861,7 @@ async def chat_stream_endpoint(
 # =============================================================================
 
 @router.get("/api/chat/history/{session_id}")
-async def get_chat_history(session_id: str):
+async def get_chat_history(session_id: str, principal: Principal = Depends(get_current_principal)):
     """Get conversation history for a session"""
     if not validate_session_id(session_id):
         raise HTTPException(
@@ -826,8 +870,13 @@ async def get_chat_history(session_id: str):
         )
     
     try:
+        session = get_session(session_id)
+        if session.owner_user_id and session.owner_user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail={"error": "Forbidden", "code": "forbidden"})
         history = get_history(session_id)
         return {"session_id": session_id, "messages": history, "count": len(history)}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"History error: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve history")
@@ -838,13 +887,16 @@ async def get_chat_history(session_id: str):
 # =============================================================================
 
 @router.post("/api/users")
-async def save_user(request: UserDataRequest):
+async def save_user(
+    request: UserDataRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Save user data for future use.
     Example: Save someone's UPI ID so AI can use it for payments.
     """
     try:
-        save_user_data(request.identifier, request.data)
+        save_user_data(f"{principal.tenant_id}:{request.identifier}", request.data)
         return {"status": "saved", "identifier": request.identifier}
     except Exception as e:
         logger.error(f"Save user error: {str(e)}")
@@ -852,12 +904,15 @@ async def save_user(request: UserDataRequest):
 
 
 @router.get("/api/users/{identifier}")
-async def get_user(identifier: str):
+async def get_user(
+    identifier: str,
+    principal: Principal = Depends(get_current_principal),
+):
     """Get saved user data"""
     identifier = sanitize_html(identifier.strip().lower())
     
     try:
-        data = get_user_data(identifier)
+        data = get_user_data(f"{principal.tenant_id}:{identifier}")
         return {"identifier": identifier, "data": data}
     except Exception as e:
         logger.error(f"Get user error: {str(e)}")
@@ -872,6 +927,7 @@ async def get_user(identifier: str):
 async def button_action_endpoint(
     request: ButtonActionRequest,
     raw_request: Request,
+    principal: Principal = Depends(get_current_principal),
     _: None = Depends(check_rate_limit)
 ):
     """
@@ -889,7 +945,7 @@ async def button_action_endpoint(
             "confirm_no": "no",
         }
         message = action_messages.get(request.action, request.action)
-        result = await chat(request.session_id, message, request.user_id or "default")
+        result = await chat(request.session_id, message, principal.user_id)
         
         response_time = (time.time() - start_time) * 1000
         
@@ -901,8 +957,17 @@ async def button_action_endpoint(
                 "session_id": request.session_id
             }
         
+        # Handle empty messages (same as chat_endpoint)
+        message_text = result.get("message") or result.get("response") or result.get("content") or ""
+        if not message_text or not str(message_text).strip():
+            message_text = "I produced an empty response due to an internal issue. Please try again."
+            if result.get("status") in (None, "", "done", "success"):
+                result["status"] = "error"
+            if not result.get("type"):
+                result["type"] = "answer"
+        
         return ChatResponse(
-            message=result.get("message", ""),
+            message=message_text,
             type=result.get("type", "answer"),
             status=result.get("status"),
             session_id=request.session_id,
@@ -932,7 +997,9 @@ async def button_action_endpoint(
 # =============================================================================
 
 @router.get("/api/capabilities")
-async def get_capabilities():
+async def get_capabilities(
+    principal: Principal = Depends(get_current_principal),  # Item 1: auth required
+):
     """
     Get current AI capabilities and their status.
     Helps frontend show what's available.
@@ -975,13 +1042,16 @@ async def get_capabilities():
 # =============================================================================
 
 @router.post("/api/feedback")
-async def submit_feedback(request: FeedbackRequest):
+async def submit_feedback(
+    request: FeedbackRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Submit user feedback (positive/negative) for an AI response.
     This feedback influences future AI behavior through the Learning Loop.
     """
     try:
-        user_id = request.user_id or "default"
+        user_id = principal.user_id
         result = brain.submit_feedback(
             session_id=request.session_id,
             user_id=user_id,
@@ -1001,9 +1071,12 @@ async def submit_feedback(request: FeedbackRequest):
 
 
 @router.get("/api/learning/stats")
-async def get_learning_stats():
+async def get_learning_stats(
+    principal: Principal = Depends(get_current_principal),  # Item 1: auth required
+):
     """
     Get learning loop statistics - strategy confidence, success rates, etc.
+    Requires admin role.
     """
     try:
         from backend.core.strategy_store import StrategyStore

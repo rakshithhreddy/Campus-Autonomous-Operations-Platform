@@ -3,7 +3,7 @@ NEW Task-Based Agent Flow
 Uses AI to match user input to tasks, then collects required info
 """
 import re
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 
@@ -11,6 +11,7 @@ from ..core.ai_task_matcher import get_task_matcher
 from ..core.task_registry import get_task_registry
 from ..core.plugins import PluginManager
 from ..core.confirmation_manager import get_confirmation_manager, PendingAction
+from ..core.auth import get_current_principal, Principal
 
 router = APIRouter()
 
@@ -42,7 +43,6 @@ def _detect_communication_method(text: str) -> str:
 
 class AgentRequest(BaseModel):
     message: str
-    user_id: str = "default"
     session_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
 
@@ -59,7 +59,10 @@ class AgentResponse(BaseModel):
 sessions = {}
 
 @router.post("/process_v2", response_model=AgentResponse)
-async def process_task_based(request: AgentRequest):
+async def process_task_based(
+    request: AgentRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     New task-based processing:
     1. AI matches user input to a task
@@ -72,9 +75,12 @@ async def process_task_based(request: AgentRequest):
     # Get or create session
     if request.session_id and request.session_id in sessions:
         session = sessions[request.session_id]
+        if session.get("user_id") != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
     else:
         session = {
             "session_id": f"task_{len(sessions)}",
+            "user_id": principal.user_id,
             "task_id": None,
             "collected_info": {},
             "original_input": request.message
@@ -267,12 +273,18 @@ Return JSON:
     }
 
 @router.post("/confirm_v2")
-async def confirm_task(session_id: str, approved: bool):
+async def confirm_task(
+    session_id: str,
+    approved: bool,
+    principal: Principal = Depends(get_current_principal),
+):
     """Execute confirmed task"""
     confirmation_manager = get_confirmation_manager()
     
     if session_id not in confirmation_manager.pending_actions:
         return {"status": "error", "message": "No pending actions"}
+    if session_id not in sessions or sessions[session_id].get("user_id") != principal.user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     
     if not approved:
         del confirmation_manager.pending_actions[session_id]

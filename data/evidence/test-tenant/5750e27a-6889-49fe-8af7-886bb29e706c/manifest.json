@@ -1,0 +1,43 @@
+{
+  "mission_id": "5750e27a-6889-49fe-8af7-886bb29e706c",
+  "artifact_count": 1,
+  "artifacts": [
+    {
+      "artifact_id": "df5739d3-e9bb-4d44-b477-f2ef833fbda5",
+      "mission_id": "5750e27a-6889-49fe-8af7-886bb29e706c",
+      "tenant_id": "test-tenant",
+      "user_id": "test-user-123",
+      "step_id": null,
+      "name": "artifact-1-user@example.com.txt",
+      "content_type": "text/plain",
+      "file_path": "data\\evidence\\test-tenant\\5750e27a-6889-49fe-8af7-886bb29e706c\\df5739d3-e9bb-4d44-b477-f2ef833fbda5.txt",
+      "content_hash": "1ed1d397965e1052a9b4505c38f7c25d6629ad86b3570488e2ff1ad07913f802",
+      "previous_hash": null,
+      "classification": "internal",
+      "metadata": {
+        "owner_email": "owner@example.com",
+        "api_key": "abcdef123456",
+        "retention_days": 30,
+        "expires_at": "2026-05-23T15:54:04.251809",
+        "chain_index": 1
+      },
+      "created_at": "2026-04-23T15:54:04.251809"
+    }
+  ],
+  "chain_of_custody": [
+    {
+      "artifact_id": "df5739d3-e9bb-4d44-b477-f2ef833fbda5",
+      "content_hash": "1ed1d397965e1052a9b4505c38f7c25d6629ad86b3570488e2ff1ad07913f802",
+      "previous_hash": null,
+      "chain_index": 1,
+      "created_at": "2026-04-23T15:54:04.251809"
+    }
+  ],
+  "retention_policy": {
+    "retention_days": 30,
+    "include_expired": true
+  },
+  "expired_artifact_count": 0,
+  "generated_at": "2026-04-23T15:54:04.251809",
+  "bundle_hash": "c8dc32bcfb4bb6058ec0a90ac7479f755164a92564186d73a91bdf6fc5ed2310"
+}

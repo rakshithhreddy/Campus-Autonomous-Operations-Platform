@@ -1,205 +1,192 @@
-# PRD: Campus Autonomous Operations Reliability Platform
+# PRD: Campus Autonomous Operations Platform
 
 ## 1. Product overview
 
 ### 1.1 Document title and version
 
-- PRD: Campus Autonomous Operations Reliability Platform
+- PRD: Campus Autonomous Operations Platform
 - Version: 1.0
 
 ### 1.2 Product summary
 
-This project defines a deployable autonomous platform for higher education institutions where AI agents do not only suggest actions but execute institution workflows with reliability, governance, and auditability. The core product position is a trust layer that converts agentic AI from a demo experience into a controlled operations system.
+This project defines an institution-focused autonomous operations platform that executes workflows with governance, evidence, and accountability. The product is intentionally positioned against generic AI assistants by solving a different problem: controlled execution in regulated, multi-stakeholder environments.
 
-The platform includes three integrated modules: an Autonomous Accreditation and Faculty Workload Copilot, an AI Agent Safety and Evaluation Platform, and an Autonomous Incident Commander for Campus IT. Each module solves a high-friction institutional problem with strong traceability and human-in-the-loop controls.
+Most generic AI products optimize for conversational intelligence and broad utility. This platform optimizes for institutional trust and operational reliability through approval gates, policy-aware execution, immutable audit trails, and domain-specific workflow templates.
 
-The product is India-context aware, aligned to NAAC and NBA process realities, and built for high administrative load environments where process evidence, accountability, and compliance outcomes matter as much as task completion speed.
+The first target context is higher education institutions with high administrative burden, compliance pressure, and cross-team coordination gaps. The product turns AI from suggestion software into accountable execution infrastructure.
 
 ## 2. Goals
 
 ### 2.1 Business goals
 
-- Reduce manual accreditation and compliance preparation effort by at least 40 percent in pilot institutions.
-- Establish the product as a reliability and governance platform, not a generic assistant.
-- Achieve paid pilot readiness for colleges and universities within one academic cycle.
-- Create a reusable verification and audit framework across all autonomous workflows.
+- Establish clear differentiation versus generic AI in pilot conversations and evaluations.
+- Achieve at least 3 institutional pilots where governance and traceability are primary purchase criteria.
+- Demonstrate measurable reduction in process cycle time for accreditation and IT operations workflows.
+- Create a reusable trust-and-governance platform that can expand to additional institutional workflows.
 
 ### 2.2 User goals
 
-- Enable faculty and coordinators to complete documentation-heavy tasks with less administrative burden.
-- Provide clear evidence trails for every AI action and recommendation.
-- Allow IT teams to detect and handle incidents faster with escalation support.
-- Let institutions evaluate external and internal AI agents before operational deployment.
+- Complete administrative workflows faster without losing control.
+- Review and approve sensitive actions before execution.
+- Access audit-ready evidence for every AI action and output.
+- Minimize rework caused by missing documentation and unclear ownership.
 
 ### 2.3 Non-goals
 
-- Building a general-purpose chatbot for open-ended conversation.
-- Replacing institutional policy decision-makers.
-- Fully autonomous high-risk actions without approvals.
-- Supporting all compliance frameworks globally in MVP.
+- Building a general-purpose consumer chatbot for open-ended conversation.
+- Replacing institutional policy owners for high-risk decisions.
+- Autonomous execution of high-risk actions without human approval.
+- Competing with generic AI primarily on model benchmark scores.
 
 ## 3. User personas
 
 ### 3.1 Key user types
 
-- IQAC and accreditation coordinators
+- Accreditation and compliance coordinators
 - Faculty members and department heads
-- Campus IT operations and system administrators
-- Institutional leadership and compliance reviewers
-- Internal AI governance and audit committee members
+- Campus IT operations teams
+- Institutional leadership and governance reviewers
 
 ### 3.2 Basic persona details
 
-- **Accreditation coordinator**: Owns NAAC and NBA documentation quality, deadlines, and evidence packaging.
-- **Faculty member**: Balances teaching, mentoring, and reporting with limited time for repetitive admin tasks.
-- **Campus IT administrator**: Monitors uptime, handles incidents, and needs faster triage with verifiable steps.
-- **AI governance reviewer**: Validates whether AI systems are safe, compliant, and reliable for institutional use.
+- **Accreditation coordinator**: Needs fast, accurate evidence packaging with clear source traceability.
+- **Faculty member**: Needs workload reduction for repetitive reporting and compliance tasks.
+- **IT operator**: Needs faster incident triage and controlled remediation with escalation evidence.
+- **Institutional reviewer**: Needs confidence that AI actions follow policy and can be audited.
 
 ### 3.3 Role-based access
 
-- **Platform admin**: Manage tenants, policies, model providers, approval rules, and access controls.
-- **Accreditation manager**: Configure NAAC and NBA workflows, assign owners, approve submissions.
-- **Faculty user**: Submit evidence, manage CO-PO mappings, generate reports, complete assigned actions.
-- **IT operator**: View incidents, run remediation playbooks, acknowledge escalations.
-- **Auditor and reviewer**: Read-only access to logs, scorecards, compliance reports, and approval history.
+- **Platform admin**: Configure tenant policies, approval rules, access controls, and integrations.
+- **Operations manager**: Approve high-risk workflow steps, monitor execution timelines, and review exceptions.
+- **Contributor**: Submit inputs, run allowed workflows, and respond to assigned actions.
+- **Auditor**: Read-only access to logs, approvals, evidence artifacts, and compliance exports.
 
 ## 4. Functional requirements
 
-- **Reliability and governance core** (Priority: P0)
-  - Unified task orchestration with explicit planning, execution, validation, and closure states.
-  - Policy engine to classify risk and enforce approval requirements before execution.
-  - Immutable action logs including actor, timestamp, decision basis, execution output, and rollback notes.
-  - Evidence vault for generated artifacts, execution traces, and compliance documents.
-  - Human-in-the-loop controls for high-impact actions.
+- **Differentiation proof layer: Why us vs generic AI** (Priority: P0)
+  - System must provide a side-by-side outcome view: suggestion-only output versus governed execution output.
+  - Every mission must include an execution trace showing plan, decisions, actions, approvals, and artifacts.
+  - Platform must compute trust metrics per mission: trace completeness, approval compliance, and policy adherence.
+  - Product must expose risk-classified action categories with configurable approval thresholds.
 
-- **Autonomous accreditation and faculty workload copilot** (Priority: P0)
-  - NAAC and NBA evidence intake from files, forms, email metadata, and linked systems.
-  - CO-PO mapping assistant with suggestions and manual override.
-  - Automated report generation for periodic and annual review cycles.
-  - Timetable coordination assistant with conflict detection and approval routing.
-  - Compliance reminders, meeting minutes capture, and action item tracking.
+- **Governed autonomous workflow engine** (Priority: P0)
+  - Parse user intent into multi-step mission plans with explicit state transitions.
+  - Execute low-risk steps automatically and hold high-risk steps for approval.
+  - Retry transient failures with bounded attempts and documented fallback behavior.
+  - Support manual override with mandatory reason capture and reviewer visibility.
 
-- **AI agent safety and evaluation platform** (Priority: P1)
-  - Test harness for hallucination risk, unsafe tool use, policy violations, and consistency under stress.
-  - Scenario library with institution-specific prompts and failure conditions.
-  - Scoring model producing reliability, safety, compliance, and reproducibility scores.
-  - Certification report generation with pass, conditional pass, and fail outcomes.
-  - Regression comparison across model versions and policy versions.
+- **Domain workflow packs for institutions** (Priority: P0)
+  - Accreditation workflow pack: evidence intake, missing evidence detection, owner assignment, report export.
+  - Faculty operations workflow pack: routine task orchestration, reminders, and action tracking.
+  - IT incident workflow pack: alert intake, triage proposals, controlled remediation, and post-incident summary.
 
-- **Autonomous incident commander for campus IT** (Priority: P1)
-  - Ingest alerts from infrastructure logs, uptime monitors, and service health checks.
-  - Correlate symptoms, propose likely root causes, and generate remediation steps.
-  - Execute low-risk remediations automatically and gate high-risk actions with approval.
-  - Escalate incidents with full evidence trail and communication templates.
-  - Provide post-incident reports with timeline, actions taken, and prevention recommendations.
+- **Audit and evidence vault** (Priority: P0)
+  - Immutable logs for mission events with actor, timestamp, input, action, outcome, and justification.
+  - Evidence storage for generated documents, trace files, and approval records.
+  - Exportable compliance bundles by mission, date range, department, and workflow type.
 
-- **Integration and extensibility** (Priority: P1)
-  - Adapter framework for LMS, ERP, email, calendar, and monitoring systems.
-  - Secure credential storage with token rotation and least privilege access.
-  - API and webhook support for inbound and outbound workflow events.
+- **Integrations and controls** (Priority: P1)
+  - Token-based integrations for institutional systems and communication tools.
+  - Least-privilege access patterns and integration health status monitoring.
+  - Integration failure handling that degrades gracefully and preserves audit continuity.
 
 ## 5. User experience
 
 ### 5.1 Entry points and first-time user flow
 
-- Tenant setup by platform admin with institutional profile and policy templates.
-- Role assignment and access provisioning for faculty, coordinators, and IT operators.
-- Guided onboarding to connect systems and configure approval policies.
-- First-run demo workflow that showcases plan, execution, validation, and evidence outputs.
+- Admin configures tenant, roles, and risk policy templates.
+- Team connects required systems and validates integration health.
+- User starts a guided first mission from a domain workflow pack.
+- Platform shows a live mission timeline with approval checkpoints.
 
 ### 5.2 Core experience
 
-- **Create mission**: User submits institutional task in natural language or structured form.
-  - The product generates a transparent plan with estimated risk and required approvals.
-- **Approve and execute**: User reviews sensitive steps and approves where required.
-  - The product executes actions, updates status in real time, and logs evidence.
-- **Validate outcomes**: User sees auto-validation checks and exceptions.
-  - The product flags failures, proposes retries, and tracks decision rationale.
-- **Publish deliverables**: User exports reports, scorecards, minutes, or incident summaries.
-  - The product preserves audit-ready records for review.
+- **Start mission**: User submits a domain task in natural language or form mode.
+  - The product presents plan, risk tags, and required approvals before execution.
+- **Approve critical steps**: Approvers review sensitive actions and approve, reject, or request changes.
+  - The product enforces policy and blocks unauthorized high-risk execution.
+- **Track execution**: User watches mission progress and exception handling in real time.
+  - The product links each step to proof and source artifacts.
+- **Publish output**: User exports deliverables and compliance bundles.
+  - The product preserves complete traceability for institutional review.
 
 ### 5.3 Advanced features and edge cases
 
-- Recovery flow when integration credentials expire mid-task.
-- Controlled degradation path when a downstream system is unavailable.
-- Multi-approver workflows for conflicting policy rules.
-- Duplicate evidence detection and conflict resolution.
-- Manual override with mandatory justification logging.
+- Expired integration token during mission execution.
+- Conflicting approval rules across departments.
+- Partial downstream outage with fallback execution mode.
+- Duplicate or contradictory evidence submissions.
+- Manual intervention with rollback and reason logging.
 
 ### 5.4 UI and UX highlights
 
-- Mission timeline view with state transitions and approval checkpoints.
-- Evidence panel with trace links, source context, and export actions.
-- Safety score dashboard with trend analysis.
-- Incident war-room interface with timeline and escalation controls.
-- Faculty workload board showing reminders, deadlines, and ownership.
+- Mission timeline with state transitions and blockers.
+- Approval queue with risk rationale and impact preview.
+- Evidence explorer with source, version, and ownership.
+- Differentiation dashboard showing trust metrics versus suggestion-only baselines.
 
 ## 6. Narrative
 
-A faculty coordinator begins with a deadline-driven accreditation request. The platform plans and executes data collection, evidence packaging, and report drafting while requesting approvals only where needed. In parallel, the institution evaluates AI agent behavior using structured safety tests before deployment. During infrastructure issues, the same platform triages incidents, executes approved remediations, and produces a verified incident trail. The institution gains speed with control, and autonomy with accountability.
+An operations coordinator starts an accreditation mission days before a deadline. The platform converts the request into a policy-aware plan, executes permitted steps, and pauses only where approvals are required. Each outcome includes evidence and immutable trace links, reducing confusion and rework. Unlike generic AI responses, the institution gets accountable execution with measurable trust outcomes.
 
 ## 7. Success metrics
 
 ### 7.1 User-centric metrics
 
-- Time saved per faculty member per month on administrative tasks.
-- Percentage of accreditation artifacts generated with complete evidence traces.
-- User satisfaction score for mission transparency and control.
-- Reduction in missed compliance deadlines.
+- Reduction in hours spent per user on target workflows.
+- Percentage of missions completed with full traceability.
+- Approval turnaround time for high-risk steps.
+- User confidence score on mission transparency and control.
 
 ### 7.2 Business metrics
 
-- Pilot-to-production conversion rate across institutions.
-- Number of departments actively using at least one module weekly.
-- Reduction in external audit preparation effort.
-- Renewal and expansion rate after first pilot cycle.
+- Pilot conversion rate where governance is stated as primary buying factor.
+- Win rate against generic AI alternatives in institutional evaluations.
+- Expansion rate from first workflow pack to multi-pack usage.
+- Renewal intent after one full operational cycle.
 
 ### 7.3 Technical metrics
 
-- Mission success rate with validated outcomes.
-- Mean time to detect and mean time to resolve campus IT incidents.
-- Policy violation detection rate during AI safety evaluation.
-- Percentage of high-risk actions gated by approval workflow.
-- End-to-end trace completeness across executed missions.
+- Mission success rate with policy-compliant completion.
+- Trace completeness score across all executed missions.
+- Mean time to recover from integration failures.
+- Percentage of high-risk actions successfully gated by approvals.
 
 ## 8. Technical considerations
 
 ### 8.1 Integration points
 
-- Institutional ERP and faculty information systems.
-- LMS platforms and assessment repositories.
-- Email and calendar systems.
-- Monitoring and observability stacks for IT incidents.
-- Existing AI model providers and institutional knowledge stores.
+- Institutional ERP, LMS, and document repositories.
+- Email, calendar, and messaging systems.
+- Monitoring and alerting systems for IT incident workflows.
+- Identity providers for role and access controls.
 
 ### 8.2 Data storage and privacy
 
-- Store institutional data in tenant-isolated partitions.
-- Encrypt data at rest and in transit.
-- Role-based access and least privilege controls for all actions.
-- Configurable retention for logs, evidence, and generated artifacts.
-- Compliance-ready export capabilities for audits.
+- Tenant-isolated data boundaries.
+- Encryption in transit and at rest.
+- Immutable audit logs with retention controls.
+- Role-based access and evidence export governance.
 
 ### 8.3 Scalability and performance
 
 - Asynchronous orchestration for long-running missions.
-- Queue-based execution with retry and backoff policies.
-- Horizontal scaling for evaluator workloads and incident streams.
-- Caching for repeated report generation and policy checks.
+- Queue-based execution and retry policies.
+- Horizontal scaling for mission workers and event streams.
+- Caching for repeated policy checks and report generation.
 
 ### 8.4 Potential challenges
 
-- Inconsistent source data quality across departments.
-- Institutional resistance to process standardization.
-- Integration variability across legacy systems.
-- Approval bottlenecks for high-risk workflows.
-- False positives in safety and incident classification.
+- Variable institutional data quality and process maturity.
+- Approval bottlenecks that can reduce throughput.
+- Integration diversity and legacy system constraints.
+- Change management resistance to governed automation.
 
 ## 9. Milestones and sequencing
 
 ### 9.1 Project estimate
 
-- Medium to large: 12 to 16 weeks for MVP with one institutional pilot
+- Medium to large: 12 to 16 weeks for MVP and pilot validation
 
 ### 9.2 Team size and composition
 
@@ -207,135 +194,87 @@ A faculty coordinator begins with a deadline-driven accreditation request. The p
 
 ### 9.3 Suggested phases
 
-- **Phase 1**: Reliability and governance core foundation (3 weeks)
-  - Key deliverables: mission state machine, policy engine, approval flow, audit log schema.
-- **Phase 2**: Accreditation and faculty workload module MVP (4 weeks)
-  - Key deliverables: evidence intake, CO-PO mapping workflow, report generator, reminders and action tracking.
-- **Phase 3**: AI safety and evaluation module MVP (3 weeks)
-  - Key deliverables: test harness, scenario library, scoring engine, certification report template.
-- **Phase 4**: Campus IT incident commander MVP (3 weeks)
-  - Key deliverables: alert ingestion, triage assistant, controlled remediation, escalation flow.
-- **Phase 5**: Pilot hardening and institutional rollout readiness (3 weeks)
-  - Key deliverables: security review, performance tuning, pilot playbook, success metrics dashboard.
+- **Phase 1**: Trust foundation and policy engine (3 weeks)
+  - Key deliverables: risk taxonomy, approval framework, audit log schema, baseline trust metrics.
+- **Phase 2**: Governed workflow engine and timeline UX (3 weeks)
+  - Key deliverables: mission state machine, execution controls, exception handling, timeline UI.
+- **Phase 3**: Institutional workflow pack MVP (4 weeks)
+  - Key deliverables: accreditation workflows, evidence vault, compliance exports.
+- **Phase 4**: Incident and operations extension (3 weeks)
+  - Key deliverables: incident flow pack, escalation templates, post-incident reporting.
+- **Phase 5**: Pilot proof and differentiation readiness (3 weeks)
+  - Key deliverables: differentiation dashboard, benchmark stories, pilot outcomes package.
 
 ## 10. User stories
 
-### 10.1 Configure reliability policies
+### 10.1 Define policy and approval controls
 
 - **ID**: GH-001
-- **Description**: As a platform admin, I want to define risk policies and approval rules so autonomous missions follow institutional governance.
+- **Description**: As a platform admin, I want to configure risk levels and approval rules so the system executes tasks with institutional governance.
 - **Acceptance criteria**:
-  - Admin can create, edit, and version policy rules.
-  - Every mission is tagged with a risk level before execution.
-  - High-risk steps require explicit approval before action.
-  - Policy decisions are recorded in immutable logs.
+  - Admin can create, edit, and version risk policies.
+  - Every mission step is automatically risk classified before execution.
+  - High-risk steps cannot execute without required approvals.
+  - Policy decisions are logged with actor and timestamp.
 
-### 10.2 Execute accreditation evidence mission
+### 10.2 Run a governed accreditation mission
 
 - **ID**: GH-002
-- **Description**: As an accreditation coordinator, I want to run a mission that collects and structures NAAC and NBA evidence so I can reduce manual preparation work.
+- **Description**: As an accreditation coordinator, I want to execute an evidence collection mission so I can reduce manual preparation while preserving traceability.
 - **Acceptance criteria**:
-  - User can define target cycle, department scope, and evidence requirements.
+  - User can select accreditation cycle and scope.
   - System ingests evidence from at least three configured sources.
-  - Missing evidence is flagged with owner assignment and due date.
-  - Final evidence pack is exportable with source trace links.
+  - Missing evidence is assigned with owner and due date.
+  - Exported evidence bundle includes source trace links.
 
-### 10.3 Map CO-PO outcomes with review workflow
+### 10.3 Review and approve sensitive actions
 
 - **ID**: GH-003
-- **Description**: As a faculty member, I want assisted CO-PO mapping with review and override options so mapping quality improves without losing control.
+- **Description**: As an operations manager, I want a clear approval queue so I can control high-impact AI actions.
 - **Acceptance criteria**:
-  - System suggests initial CO-PO mappings with confidence scores.
-  - Faculty can accept, reject, or edit each mapping.
-  - Department head approval is required before final submission.
-  - Mapping decisions and changes are fully auditable.
+  - Approvers can see risk rationale and expected impact before decision.
+  - Approver can approve, reject, or request modification.
+  - Rejected steps include mandatory reason and next-state handling.
+  - All approval decisions are immutable and auditable.
 
-### 10.4 Generate compliance reports and minutes
+### 10.4 Compare governed execution with generic AI outputs
 
 - **ID**: GH-004
-- **Description**: As a coordinator, I want automated report and meeting-minutes generation with action tracking so compliance communication is consistent.
+- **Description**: As institutional leadership, I want differentiation metrics so I can evaluate why this product is better for institutional operations than generic AI.
 - **Acceptance criteria**:
-  - User can generate report drafts from mission data.
-  - Minutes include decisions, owners, and due dates.
-  - Action items appear in a shared task board with reminders.
-  - Exports support PDF and editable document formats.
+  - Dashboard shows trust metrics per mission.
+  - System displays trace completeness and policy compliance scores.
+  - Comparison view highlights execution and accountability differences.
+  - Reports can be exported for pilot and procurement reviews.
 
-### 10.5 Evaluate AI agent safety before deployment
+### 10.5 Manage integration failures without losing accountability
 
 - **ID**: GH-005
-- **Description**: As an AI governance reviewer, I want to evaluate an AI agent against safety and reliability scenarios so deployment decisions are evidence-based.
+- **Description**: As an operator, I want graceful fallback behavior so missions continue safely when external services fail.
 - **Acceptance criteria**:
-  - Reviewer can select scenario suite and policy baseline.
-  - System runs tests and records outputs for each case.
-  - Dashboard shows hallucination, policy violation, and consistency scores.
-  - Certification report includes pass or fail rationale and remediation suggestions.
+  - Integration health is checked before critical steps.
+  - On failure, system applies configured fallback path.
+  - Mission timeline records fallback reason and outcome.
+  - User receives actionable recovery guidance.
 
-### 10.6 Run stress and regression tests for AI agents
+### 10.6 Access complete audit evidence
 
 - **ID**: GH-006
-- **Description**: As an AI engineer, I want to compare test outcomes across model versions so I can prevent quality regressions.
+- **Description**: As an auditor, I want immutable mission logs and artifacts so I can validate compliance without manual reconstruction.
 - **Acceptance criteria**:
-  - User can run identical test suites across multiple versions.
-  - Results show deltas for reliability and safety metrics.
-  - Failing dimensions are highlighted with reproducible traces.
-  - Reports can be shared with reviewers in read-only mode.
+  - Auditor can filter logs by mission, actor, date, and workflow type.
+  - Every mission step links to associated evidence artifacts.
+  - Export includes execution trace, approvals, and outcomes.
+  - Log entries cannot be edited after finalization.
 
-### 10.7 Detect and triage campus IT incidents
+### 10.7 Enforce authentication and authorization controls
 
 - **ID**: GH-007
-- **Description**: As an IT operator, I want automated incident triage with recommended actions so outage response is faster.
+- **Description**: As a security administrator, I want role-based access and authenticated sessions so only authorized users can run or approve missions.
 - **Acceptance criteria**:
-  - System ingests alerts and groups related events.
-  - Triage output provides probable root cause and confidence.
-  - Low-risk remediation can execute automatically when policy allows.
-  - Incident timeline is visible in real time.
+  - All mission actions require authenticated user context.
+  - Authorization checks enforce role-specific permissions.
+  - Unauthorized attempts are blocked and logged.
+  - Session and access events are available for security review.
 
-### 10.8 Escalate high-risk incidents with evidence
-
-- **ID**: GH-008
-- **Description**: As an IT lead, I want controlled escalation workflows for critical incidents so decisions are fast and auditable.
-- **Acceptance criteria**:
-  - Critical incidents trigger predefined escalation chains.
-  - Escalation packets include logs, actions taken, and pending decisions.
-  - Required approvers are notified through configured channels.
-  - Closure requires post-incident summary and preventive actions.
-
-### 10.9 Ensure secure authentication and authorization
-
-- **ID**: GH-009
-- **Description**: As a security administrator, I want strong authentication and role-based authorization so only permitted users perform sensitive operations.
-- **Acceptance criteria**:
-  - Users must authenticate through approved identity providers.
-  - Access to modules and actions follows role-based policies.
-  - Sensitive actions require step-up authentication where configured.
-  - All access decisions are logged with user and timestamp.
-
-### 10.10 Verify end-to-end mission traceability
-
-- **ID**: GH-010
-- **Description**: As an auditor, I want complete mission traceability so I can verify what was done, why, by whom, and with what outcome.
-- **Acceptance criteria**:
-  - Every mission has a unique trace identifier.
-  - Plan, approvals, actions, outputs, and exceptions are linked.
-  - Trace data is exportable for external audit.
-  - Missing trace segments are detected and flagged.
-
-### 10.11 Manage workload reminders and compliance deadlines
-
-- **ID**: GH-011
-- **Description**: As a faculty user, I want reminders and deadline tracking so I can complete compliance tasks on time.
-- **Acceptance criteria**:
-  - User sees upcoming tasks by due date and priority.
-  - Reminder cadence is configurable by role and workflow.
-  - Overdue tasks escalate to designated reviewers.
-  - Completion status updates are reflected in dashboards.
-
-### 10.12 Provide fallback when integrations fail
-
-- **ID**: GH-012
-- **Description**: As an operations user, I want graceful fallback options when external integrations fail so missions can continue with minimal disruption.
-- **Acceptance criteria**:
-  - Integration failures are detected within defined timeouts.
-  - System retries with configurable backoff and logs outcomes.
-  - If retries fail, user is offered safe manual continuation.
-  - Mission status clearly reflects partial completion and pending steps.
+After reviewing this PRD, confirm if you want me to proceed with creating GitHub issues for the user stories.

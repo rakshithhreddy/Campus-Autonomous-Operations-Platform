@@ -43,7 +43,8 @@ class Config:
     
     # AI Providers
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    # Prefer Kimi (Moonshot) when configured.
+    OPENAI_API_KEY = os.getenv("KIMI_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
     
     # Image Generation
     TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")

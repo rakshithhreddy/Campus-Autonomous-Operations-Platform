@@ -19,6 +19,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
 
+from .openai_compat import build_openai_compatible_url, get_openai_compatible_api_key
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +33,7 @@ class ImageGenerationService:
         self.together_key = os.getenv("TOGETHER_API_KEY")
         self.replicate_key = os.getenv("REPLICATE_API_KEY")
         self.stability_key = os.getenv("STABILITY_API_KEY")
-        self.openai_key = os.getenv("OPENAI_API_KEY")
+        self.openai_key = get_openai_compatible_api_key()
         
         # Track which providers are available
         self.available_providers = []
@@ -71,7 +73,7 @@ class ImageGenerationService:
         if not self.has_providers():
             return {
                 "success": False,
-                "error": "No image generation provider configured. Set TOGETHER_API_KEY, OPENAI_API_KEY, or STABILITY_API_KEY.",
+                "error": "No image generation provider configured. Set TOGETHER_API_KEY, KIMI_API_KEY (OpenAI-compatible), or STABILITY_API_KEY.",
                 "fallback_tools": self._get_fallback_tools()
             }
         
@@ -298,7 +300,7 @@ class ImageGenerationService:
             for i in range(num_images):
                 try:
                     async with session.post(
-                        "https://api.openai.com/v1/images/generations",
+                        build_openai_compatible_url("/images/generations"),
                         headers={
                             "Authorization": f"Bearer {self.openai_key}",
                             "Content-Type": "application/json"

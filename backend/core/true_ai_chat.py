@@ -606,6 +606,8 @@ DO NOT call the original action tool again - use execute_confirmed_action instea
                     return {"status": "success", "action": "meeting_created", "result": result}
                 else:
                     # Fallback to Jitsi (browser automation not needed, API is open)
+                    import uuid as _uuid
+                    meeting_id = f"caop-{_uuid.uuid4().hex[:8]}"
                     meeting_url = f"https://meet.jit.si/{meeting_id}"
                     return {
                         "status": "success", 

@@ -1,0 +1,941 @@
+plan_id: 20260421-governed-execution
+objective: Identify existing code patterns and files that can be reused to implement the remaining governance, evidence, and trust features quickly and safely.
+focus_area: approval engine, audit trail, evidence storage, mission states, telemetry, frontend dashboards, security hardening, tests
+created_at: "2026-04-21"
+created_by: GitHub Copilot
+status: completed
+tldr:
+  - Existing governed-execution reuse is concentrated in backend/core/task_engine.py, backend/core/confirmation_manager.py, backend/core/verification_system.py, and backend/routes/tasks_v2.py.
+  - Request, trace, and telemetry reuse is already present in backend/main.py, backend/core/logging_config.py, backend/core/monitoring.py, and backend/core/performance.py.
+  - The current frontend already has a task dashboard shell in frontend/src/components/TaskPanel.jsx, frontend/src/TaskAdaptiveWorkspace.jsx, and frontend/src/AppClean.jsx that consumes task status, proof, and UI components.
+  - Main gaps are persistence for approvals, audit, and evidence, plus a dedicated governed mission model; current storage is still generic tasks, messages, memories, workflow sessions, and plugin executions.
+research_metadata:
+  methodology: semantic_search + grep_search + read_file + relationship discovery
+  scope: backend/routes, backend/core, backend/database_supabase.py, frontend/src, backend/tests, tests
+  confidence: high
+  coverage: 88
+  decision_blockers: 2
+  research_blockers: 0
+files_analyzed:
+  - file: backend/routes/api.py
+    path: backend/routes/api.py
+    purpose: Main chat and action API surface that already returns task state, proof, and UI components.
+    key_elements:
+      - element: ChatResponse
+        type: class
+        location: backend/routes/api.py:566
+        description: Response contract already carries status, summary, proof, task_id, steps, and ui_components.
+        language: python
+      - element: chat_endpoint
+        type: function
+        location: backend/routes/api.py:675
+        description: Main POST /api/chat flow; bridges user input to the governed chat/task pipeline.
+        language: python
+      - element: button_action_endpoint
+        type: function
+        location: backend/routes/api.py:885
+        description: Converts button actions back into the chat flow and returns the same response envelope.
+        language: python
+      - element: get_capabilities
+        type: function
+        location: backend/routes/api.py:949
+        description: Exposes current capabilities so the frontend can show availability state.
+        language: python
+    lines: 440
+  - file: backend/routes/tasks_v2.py
+    path: backend/routes/tasks_v2.py
+    purpose: Task orchestration API with status, substeps, user input, cancellation, and notifications.
+    key_elements:
+      - element: CreateTaskRequest
+        type: class
+        location: backend/routes/tasks_v2.py:24
+        description: Request model for creating orchestrated tasks.
+        language: python
+      - element: TaskResponse
+        type: class
+        location: backend/routes/tasks_v2.py:31
+        description: Response model that exposes progress_percent, substeps, ETA, and input prompts.
+        language: python
+      - element: create_task
+        type: function
+        location: backend/routes/tasks_v2.py:61
+        description: Creates a task, executes immediate steps, and returns progress state for the UI.
+        language: python
+      - element: update_substep
+        type: function
+        location: backend/routes/tasks_v2.py:156
+        description: Updates a substep after webhooks or manual completion.
+        language: python
+      - element: provide_user_input
+        type: function
+        location: backend/routes/tasks_v2.py:193
+        description: Accepts manual input and optionally resumes execution.
+        language: python
+      - element: cancel_task
+        type: function
+        location: backend/routes/tasks_v2.py:229
+        description: Cancels a task and persists cancellation state if Supabase is available.
+        language: python
+      - element: get_notifications
+        type: function
+        location: backend/routes/tasks_v2.py:355
+        description: Pollable notification feed used by the task dashboard.
+        language: python
+      - element: mark notification read endpoint
+        type: function
+        location: backend/routes/tasks_v2.py:377
+        description: Marks a notification as read in Supabase.
+        language: python
+    lines: 390
+  - file: backend/core/task_engine.py
+    path: backend/core/task_engine.py
+    purpose: Security-aware task execution engine with intent parsing, confirmation gating, and proof emission.
+    key_elements:
+      - element: TaskCategory
+        type: class
+        location: backend/core/task_engine.py:19
+        description: Domain categories for governed tasks such as booking, payment, communication, scheduling, and verification.
+        language: python
+      - element: TaskStatus
+        type: class
+        location: backend/core/task_engine.py:36
+        description: Mission lifecycle states used by the engine.
+        language: python
+      - element: SecurityLevel
+        type: class
+        location: backend/core/task_engine.py:49
+        description: Ordered security levels that determine whether a task needs confirmation.
+        language: python
+      - element: TaskExecution
+        type: class
+        location: backend/core/task_engine.py:92
+        description: Execution record that stores parsed intent, steps, status, security level, confirmation data, and proof_of_execution.
+        language: python
+      - element: process_request
+        type: function
+        location: backend/core/task_engine.py:325
+        description: Parses intent, attaches requirements, and routes into input, confirmation, or execution flows.
+        language: python
+      - element: _create_confirmation_request
+        type: function
+        location: backend/core/task_engine.py:395
+        description: Builds the confirmation payload for high-security tasks.
+        language: python
+      - element: _execute_task
+        type: function
+        location: backend/core/task_engine.py:423
+        description: Executes the task and attaches proof_of_execution from executor output.
+        language: python
+      - element: confirm_task
+        type: function
+        location: backend/core/task_engine.py:466
+        description: Enforces confirmation and OTP rules before task execution continues.
+        language: python
+      - element: get_task_status
+        type: function
+        location: backend/core/task_engine.py:493
+        description: Returns the persisted in-memory task record for UI and API consumers.
+        language: python
+    lines: 500
+  - file: backend/core/confirmation_manager.py
+    path: backend/core/confirmation_manager.py
+    purpose: In-memory approval engine for multi-step actions.
+    key_elements:
+      - element: PendingAction
+        type: class
+        location: backend/core/confirmation_manager.py:7
+        description: Approval item that tracks action type, parameters, plugin, status, and creation timestamp.
+        language: python
+      - element: ConfirmationManager
+        type: class
+        location: backend/core/confirmation_manager.py:26
+        description: Stores session plans and pending actions in memory.
+        language: python
+      - element: create_confirmation_request
+        type: function
+        location: backend/core/confirmation_manager.py:39
+        description: Converts a plan or actions list into pending approval items.
+        language: python
+      - element: approve_action
+        type: function
+        location: backend/core/confirmation_manager.py:111
+        description: Marks a single pending action as approved.
+        language: python
+      - element: reject_action
+        type: function
+        location: backend/core/confirmation_manager.py:119
+        description: Marks a single pending action as rejected.
+        language: python
+      - element: approve_all
+        type: function
+        location: backend/core/confirmation_manager.py:127
+        description: Marks all pending actions in a session as approved.
+        language: python
+      - element: reject_all
+        type: function
+        location: backend/core/confirmation_manager.py:133
+        description: Marks all pending actions in a session as rejected.
+        language: python
+      - element: get_approved_actions
+        type: function
+        location: backend/core/confirmation_manager.py:139
+        description: Filters approved actions for execution.
+        language: python
+      - element: clear_session
+        type: function
+        location: backend/core/confirmation_manager.py:147
+        description: Removes session approval state from memory.
+        language: python
+    lines: 160
+  - file: backend/core/verification_system.py
+    path: backend/core/verification_system.py
+    purpose: Proof and audit primitives for task completion and booking verification.
+    key_elements:
+      - element: ProofType
+        type: class
+        location: backend/core/verification_system.py:32
+        description: Proof taxonomy for booking, payment, email, meeting, task, and document outcomes.
+        language: python
+      - element: ProofOfExecution
+        type: class
+        location: backend/core/verification_system.py:57
+        description: Serializable evidence payload with proof_id, proof_type, timestamp, data, signature, qr_code, and verification_url.
+        language: python
+      - element: ProofGenerator
+        type: class
+        location: backend/core/verification_system.py:81
+        description: Generates proof IDs, signatures, and QR codes.
+        language: python
+      - element: create_proof
+        type: function
+        location: backend/core/verification_system.py:123
+        description: Creates signed proof payloads for execution records.
+        language: python
+      - element: BookingVerificationService.create_booking
+        type: function
+        location: backend/core/verification_system.py:174
+        description: Creates a booking record and attaches a proof.
+        language: python
+      - element: TaskAuditService
+        type: class
+        location: backend/core/verification_system.py:456
+        description: In-memory audit log collection for task events.
+        language: python
+      - element: TaskAuditService.log_event
+        type: function
+        location: backend/core/verification_system.py:463
+        description: Records task audit events with timestamp and optional ip/user agent fields.
+        language: python
+      - element: VerificationService.verify_task_completion
+        type: function
+        location: backend/core/verification_system.py:525
+        description: Produces proof for a completed task and logs proof_generated events.
+        language: python
+      - element: VerificationService.book_with_verification
+        type: function
+        location: backend/core/verification_system.py:567
+        description: Combines audit logging, offer lookup, booking, and proof attachment.
+        language: python
+    lines: 650
+  - file: backend/core/logging_config.py
+    path: backend/core/logging_config.py
+    purpose: Structured logging and audit logging infrastructure.
+    key_elements:
+      - element: request_context
+        type: variable
+        location: backend/core/logging_config.py:30
+        description: Context variable for request tracking.
+        language: python
+      - element: LogContext
+        type: class
+        location: backend/core/logging_config.py:262
+        description: Context manager that injects request context into logs.
+        language: python
+      - element: log_context
+        type: function
+        location: backend/core/logging_config.py:279
+        description: Decorator helper for adding context to logs within a function.
+        language: python
+      - element: AuditLogger
+        type: class
+        location: backend/core/logging_config.py:410
+        description: Security-focused audit logger.
+        language: python
+      - element: log_security_event
+        type: function
+        location: backend/core/logging_config.py:497
+        description: Logs security events with severity and path metadata.
+        language: python
+    lines: 540
+  - file: backend/core/monitoring.py
+    path: backend/core/monitoring.py
+    purpose: Health, metrics, and request tracking layer.
+    key_elements:
+      - element: HealthChecker
+        type: class
+        location: backend/core/monitoring.py:40
+        description: Central health-check registry and aggregator.
+        language: python
+      - element: MetricsCollector
+        type: class
+        location: backend/core/monitoring.py:214
+        description: Prometheus-compatible counter, gauge, and histogram collector.
+        language: python
+      - element: RequestTracker
+        type: class
+        location: backend/core/monitoring.py:387
+        description: Tracks active requests, durations, and error counts.
+        language: python
+      - element: collect_system_metrics
+        type: function
+        location: backend/core/monitoring.py:351
+        description: Captures CPU, memory, disk, and process metrics.
+        language: python
+    lines: 430
+  - file: backend/core/performance.py
+    path: backend/core/performance.py
+    purpose: Reliability primitives for circuit breakers, cache, and request tracing.
+    key_elements:
+      - element: CircuitState
+        type: class
+        location: backend/core/performance.py:29
+        description: Closed, open, and half-open circuit breaker states.
+        language: python
+      - element: CircuitBreaker
+        type: class
+        location: backend/core/performance.py:42
+        description: Circuit breaker that tracks failures, successes, and rejection counts.
+        language: python
+      - element: CircuitBreakerMetrics
+        type: class
+        location: backend/core/performance.py:157
+        description: Stores circuit breaker call metrics.
+        language: python
+      - element: RequestTracer
+        type: class
+        location: backend/core/performance.py:800
+        description: Request tracing and duration metrics collector used by main.py.
+        language: python
+      - element: HealthMonitor
+        type: class
+        location: backend/core/performance.py:800
+        description: System health aggregation used by main.py readiness and health endpoints.
+        language: python
+    lines: 950
+  - file: backend/core/auth.py
+    path: backend/core/auth.py
+    purpose: Principal resolution and authorization helper.
+    key_elements:
+      - element: Principal
+        type: class
+        location: backend/core/auth.py:19
+        description: Authenticated request principal with user_id, tenant_id, and roles.
+        language: python
+      - element: get_current_principal
+        type: function
+        location: backend/core/auth.py:82
+        description: Resolves bearer JWTs in non-dev environments and controlled dev headers in local/testing.
+        language: python
+      - element: require_role
+        type: function
+        location: backend/core/auth.py:106
+        description: Simple role gate helper for route-level authorization checks.
+        language: python
+    lines: 120
+  - file: backend/database_supabase.py
+    path: backend/database_supabase.py
+    purpose: Supabase-backed schema and CRUD layer with memory fallback.
+    key_elements:
+      - element: MIGRATION_SQL
+        type: variable
+        location: backend/database_supabase.py:37
+        description: Migration string defining users, conversations, messages, tasks, memories, workflow_sessions, and plugin_executions.
+        language: python
+      - element: create_task
+        type: function
+        location: backend/database_supabase.py:381
+        description: Persists tasks to Supabase or memory fallback.
+        language: python
+      - element: get_task
+        type: function
+        location: backend/database_supabase.py:397
+        description: Retrieves a task by id from Supabase or memory fallback.
+        language: python
+      - element: update_task
+        type: function
+        location: backend/database_supabase.py:410
+        description: Updates a task record.
+        language: python
+      - element: get_user_tasks
+        type: function
+        location: backend/database_supabase.py:425
+        description: Fetches user-scoped tasks with optional status filter.
+        language: python
+      - element: set_memory
+        type: function
+        location: backend/database_supabase.py:447
+        description: Upserts user memory records.
+        language: python
+      - element: search_memories
+        type: function
+        location: backend/database_supabase.py:494
+        description: Searches memory records by key pattern.
+        language: python
+      - element: create_task legacy wrapper
+        type: function
+        location: backend/database_supabase.py:580
+        description: Compatibility wrapper supporting both old and new signatures.
+        language: python
+    lines: 600
+  - file: backend/core/strategy_store.py
+    path: backend/core/strategy_store.py
+    purpose: Learning loop store that caches successful patterns and feedback.
+    key_elements:
+      - element: StrategyStore
+        type: class
+        location: backend/core/strategy_store.py:116
+        description: Stores strategies on disk and applies confidence decay, success, failure, and feedback updates.
+        language: python
+      - element: save_strategy
+        type: function
+        location: backend/core/strategy_store.py:210
+        description: Persists successful task patterns.
+        language: python
+      - element: apply_feedback
+        type: function
+        location: backend/core/strategy_store.py:244
+        description: Adjusts confidence from positive or negative feedback.
+        language: python
+      - element: get_statistics
+        type: function
+        location: backend/core/strategy_store.py:258
+        description: Returns learning statistics for monitoring and dashboards.
+        language: python
+      - element: get_strategy_hint
+        type: function
+        location: backend/core/strategy_store.py:279
+        description: Produces a text hint from similar high-confidence strategies.
+        language: python
+    lines: 300
+  - file: frontend/src/components/TaskPanel.jsx
+    path: frontend/src/components/TaskPanel.jsx
+    purpose: Real-time task dashboard with polling, substeps, notifications, and iteration input.
+    key_elements:
+      - element: TaskPanel
+        type: function
+        location: frontend/src/components/TaskPanel.jsx:24
+        description: Polls /api/v2/tasks and /api/v2/tasks/notifications and renders progress cards.
+        language: jsx
+      - element: fetchTasks
+        type: function
+        location: frontend/src/components/TaskPanel.jsx:33
+        description: Loads user tasks from the backend.
+        language: jsx
+      - element: fetchNotifications
+        type: function
+        location: frontend/src/components/TaskPanel.jsx:52
+        description: Loads unread notifications for the user.
+        language: jsx
+      - element: dismissNotification
+        type: function
+        location: frontend/src/components/TaskPanel.jsx:69
+        description: Marks notifications as read through the API.
+        language: jsx
+      - element: handleIterate
+        type: function
+        location: frontend/src/components/TaskPanel.jsx:107
+        description: Sends follow-up instructions for an active task.
+        language: jsx
+    lines: 260
+  - file: frontend/src/TaskAdaptiveWorkspace.jsx
+    path: frontend/src/TaskAdaptiveWorkspace.jsx
+    purpose: Adaptive workspace shell that swaps panels based on detected task type.
+    key_elements:
+      - element: detectTaskType
+        type: function
+        location: frontend/src/TaskAdaptiveWorkspace.jsx:8
+        description: Heuristic task type detector.
+        language: jsx
+      - element: TASK_CONFIG
+        type: variable
+        location: frontend/src/TaskAdaptiveWorkspace.jsx:79
+        description: Workspace panel and badge configuration by task type.
+        language: jsx
+      - element: TaskAdaptiveWorkspace
+        type: function
+        location: frontend/src/TaskAdaptiveWorkspace.jsx:1243
+        description: Main adaptive shell that assembles the workspace, task panel, and settings/integration panels.
+        language: jsx
+      - element: workspaceState transitions
+        type: pattern
+        location: frontend/src/TaskAdaptiveWorkspace.jsx:1263
+        description: Moves between home, thinking, and active states as messages arrive.
+        language: jsx
+    lines: 260
+  - file: frontend/src/App.jsx
+    path: frontend/src/App.jsx
+    purpose: Main chat app shell wired to /api/chat and /api/chat/action.
+    key_elements:
+      - element: send
+        type: function
+        location: frontend/src/App.jsx:95
+        description: Posts chat messages and stores response fields including status, proof, steps, and ui_components.
+        language: jsx
+      - element: handleAction
+        type: function
+        location: frontend/src/App.jsx:152
+        description: Sends button actions back to the backend action endpoint.
+        language: jsx
+      - element: TaskAdaptiveWorkspace integration
+        type: pattern
+        location: frontend/src/App.jsx:176
+        description: Passes task panel and integrations panel props into the adaptive workspace.
+        language: jsx
+    lines: 220
+  - file: frontend/src/AppClean.jsx
+    path: frontend/src/AppClean.jsx
+    purpose: Alternate chat shell with proof badges, trust footer, and task panel wiring.
+    key_elements:
+      - element: Message component execution proof rendering
+        type: pattern
+        location: frontend/src/AppClean.jsx:454
+        description: Renders proof_id as a verification badge.
+        language: jsx
+      - element: sendMessage
+        type: function
+        location: frontend/src/AppClean.jsx:598
+        description: Streaming chat flow that also preserves proof and ui_components in UI state.
+        language: jsx
+      - element: TaskPanel integration
+        type: pattern
+        location: frontend/src/AppClean.jsx:922
+        description: Mounts the task dashboard in the side panel.
+        language: jsx
+      - element: trust footer
+        type: pattern
+        location: frontend/src/AppClean.jsx:1052
+        description: Footer that surfaces secure/private/AI-powered trust labels.
+        language: jsx
+    lines: 1125
+  - file: backend/tests/test_api.py
+    path: backend/tests/test_api.py
+    purpose: API smoke and validation coverage.
+    key_elements:
+      - element: TestHealthEndpoint
+        type: class
+        location: backend/tests/test_api.py:13
+        description: Verifies /api/health structure and status code.
+        language: python
+      - element: TestChatEndpoint
+        type: class
+        location: backend/tests/test_api.py:38
+        description: Verifies chat validation and success path shape.
+        language: python
+      - element: TestRateLimiting
+        type: class
+        location: backend/tests/test_api.py:87
+        description: Exercises request throttling behavior.
+        language: python
+      - element: TestInputValidation
+        type: class
+        location: backend/tests/test_api.py:169
+        description: Covers XSS, SQL injection, and invalid JSON handling.
+        language: python
+      - element: TestResponseTime
+        type: class
+        location: backend/tests/test_api.py:205
+        description: Checks health response latency and concurrent request handling.
+        language: python
+    lines: 230
+  - file: backend/tests/test_core.py
+    path: backend/tests/test_core.py
+    purpose: Core utility coverage for validation, cache, errors, and monitoring.
+    key_elements:
+      - element: TestInputValidation
+        type: class
+        location: backend/tests/test_core.py:18
+        description: Sanitization and injection detection tests.
+        language: python
+      - element: TestLRUCache
+        type: class
+        location: backend/tests/test_core.py:135
+        description: Cache behavior tests.
+        language: python
+      - element: TestErrorTracker
+        type: class
+        location: backend/tests/test_core.py:317
+        description: Error tracking and aggregation tests.
+        language: python
+      - element: TestMetricsCollector
+        type: class
+        location: backend/tests/test_core.py:391
+        description: Metrics collector tests.
+        language: python
+      - element: TestHealthChecker
+        type: class
+        location: backend/tests/test_core.py:433
+        description: Health checker tests.
+        language: python
+    lines: 520
+  - file: tests/test_behavioral_task_engine.py
+    path: tests/test_behavioral_task_engine.py
+    purpose: Behavioral contract coverage for the task engine.
+    key_elements:
+      - element: TaskCategory enum tests
+        type: pattern
+        location: tests/test_behavioral_task_engine.py:24
+        description: Verifies the task categories that drive mission classification.
+        language: python
+      - element: TaskStatus enum tests
+        type: pattern
+        location: tests/test_behavioral_task_engine.py:71
+        description: Verifies lifecycle state values.
+        language: python
+      - element: SecurityLevel enum tests
+        type: pattern
+        location: tests/test_behavioral_task_engine.py:108
+        description: Verifies ordered security classification.
+        language: python
+      - element: TaskExecution dataclass tests
+        type: pattern
+        location: tests/test_behavioral_task_engine.py:246
+        description: Verifies execution record defaults and timestamps.
+        language: python
+    lines: 420
+  - file: tests/test_behavioral_verification_system.py
+    path: tests/test_behavioral_verification_system.py
+    purpose: Behavioral contract coverage for proof generation and evidence structures.
+    key_elements:
+      - element: ProofType enum tests
+        type: pattern
+        location: tests/test_behavioral_verification_system.py:54
+        description: Verifies proof taxonomy values.
+        language: python
+      - element: ProofOfExecution dataclass tests
+        type: pattern
+        location: tests/test_behavioral_verification_system.py:140
+        description: Verifies evidence payload defaults and serialization.
+        language: python
+      - element: ProofGenerator tests
+        type: pattern
+        location: tests/test_behavioral_verification_system.py:264
+        description: Verifies proof ID generation, signature determinism, and QR code generation.
+        language: python
+    lines: 420
+  - file: tests/test_behavioral_confirmation_manager.py
+    path: tests/test_behavioral_confirmation_manager.py
+    purpose: Behavioral contract coverage for approval workflow primitives.
+    key_elements:
+      - element: PendingAction tests
+        type: pattern
+        location: tests/test_behavioral_confirmation_manager.py:18
+        description: Verifies approval item identity, status, and serialization.
+        language: python
+      - element: ConfirmationManager approval tests
+        type: pattern
+        location: tests/test_behavioral_confirmation_manager.py:204
+        description: Verifies approve/reject single action and approve/reject all flows.
+        language: python
+      - element: confirmation workflow tests
+        type: pattern
+        location: tests/test_behavioral_confirmation_manager.py:290
+        description: Verifies end-to-end approval session behavior.
+        language: python
+    lines: 360
+  - file: tests/test_behavioral_confirmation.py
+    path: tests/test_behavioral_confirmation.py
+    purpose: Behavioral confirmation workflow coverage.
+    key_elements:
+      - element: TestConfirmationManager workflow
+        type: class
+        location: tests/test_behavioral_confirmation.py:69
+        description: Verifies create, approve, reject, clear, and partial approval flows.
+        language: python
+      - element: TestSecurityLevelClassification
+        type: class
+        location: tests/test_behavioral_confirmation.py:246
+        description: Verifies confirmation expectations for low, medium, high, and critical action types.
+        language: python
+    lines: 360
+patterns_found:
+  - category: naming
+    pattern: Task, status, progress, proof, and approval vocabulary is reused across backend and frontend.
+    description: The same state vocabulary appears in task_engine, tasks_v2, TaskPanel, TaskAdaptiveWorkspace, App.jsx, and AppClean.jsx.
+    examples:
+      - file: backend/core/task_engine.py
+        location: backend/core/task_engine.py:36
+        snippet: TaskStatus values include pending, awaiting_input, awaiting_confirmation, awaiting_verification, processing, executing, completed, failed, cancelled.
+      - file: frontend/src/components/TaskPanel.jsx
+        location: frontend/src/components/TaskPanel.jsx:24
+        snippet: Task cards render status, progress_percent, substeps, and notifications.
+    prevalence: common
+  - category: architecture
+    pattern: Governed execution is already split into intent parsing, security classification, confirmation gating, execution, proof generation, and dashboard rendering.
+    description: The codebase already exposes each stage as a separate module or route surface.
+    examples:
+      - file: backend/core/task_engine.py
+        location: backend/core/task_engine.py:325
+        snippet: process_request -> input request -> confirmation request -> execute task.
+      - file: backend/core/verification_system.py
+        location: backend/core/verification_system.py:525
+        snippet: VerificationService.verify_task_completion generates proof and logs proof_generated events.
+    prevalence: common
+  - category: error_handling
+    pattern: Routes raise HTTPException while core services generally log and return dictionaries or booleans.
+    description: User-facing failures are usually HTTP errors; lower-level components are in-memory helpers with simple return contracts.
+    examples:
+      - file: backend/routes/tasks_v2.py
+        location: backend/routes/tasks_v2.py:145
+        snippet: Task not found and Forbidden are returned as HTTPException.
+      - file: backend/core/confirmation_manager.py
+        location: backend/core/confirmation_manager.py:111
+        snippet: approve_action returns True or False without persistence.
+    prevalence: common
+  - category: telemetry
+    pattern: The app already collects request durations, component health, circuit breaker state, and Prometheus-style metrics.
+    description: Telemetry is implemented as app middleware plus reusable collectors.
+    examples:
+      - file: backend/main.py
+        location: backend/main.py:342
+        snippet: performance_tracking_middleware records durations and adds X-Response-Time.
+      - file: backend/core/monitoring.py
+        location: backend/core/monitoring.py:214
+        snippet: MetricsCollector stores counters, gauges, and histograms.
+    prevalence: common
+  - category: testing
+    pattern: Behavioral tests assert dataclass and enum contracts for the governance primitives, not just endpoint status codes.
+    description: The highest-signal test coverage is in tests/test_behavioral_* modules.
+    examples:
+      - file: tests/test_behavioral_task_engine.py
+        location: tests/test_behavioral_task_engine.py:24
+        snippet: Enum and dataclass contract tests for task execution.
+      - file: tests/test_behavioral_verification_system.py
+        location: tests/test_behavioral_verification_system.py:264
+        snippet: ProofGenerator behavior and proof serialization tests.
+    prevalence: common
+related_architecture:
+  components_relevant_to_domain:
+    - component: chat API layer
+      responsibility: Turns user requests into governed responses with status, proof, and UI fields.
+      location: backend/routes/api.py:675
+      relationship_to_domain: Primary entrypoint for governed missions and approval prompts.
+    - component: task orchestration routes
+      responsibility: Creates tasks, updates substeps, handles user input, cancellation, and notifications.
+      location: backend/routes/tasks_v2.py:61
+      relationship_to_domain: Direct fit for mission state machine and approval queue screens.
+    - component: task engine
+      responsibility: Parses intent, classifies security, blocks high-risk execution pending confirmation, tracks task status.
+      location: backend/core/task_engine.py:307
+      relationship_to_domain: Core reuse point for mission states and risk-gated execution.
+    - component: confirmation manager
+      responsibility: Builds pending actions and tracks approved or rejected status per session.
+      location: backend/core/confirmation_manager.py:26
+      relationship_to_domain: Current approval-engine primitive.
+    - component: verification system
+      responsibility: Creates proof-of-execution and audit events.
+      location: backend/core/verification_system.py:81
+      relationship_to_domain: Evidence and audit primitive for governed missions.
+    - component: observability stack
+      responsibility: Metrics, health, request tracing, and circuit breakers.
+      location: backend/core/monitoring.py:214
+      relationship_to_domain: Telemetry backbone for trust metrics and operational dashboards.
+    - component: task dashboard panel
+      responsibility: Polls tasks and notifications, shows progress bars, substeps, and iteration UI.
+      location: frontend/src/components/TaskPanel.jsx:24
+      relationship_to_domain: Ready-made dashboard fragment for mission timelines.
+    - component: adaptive workspace
+      responsibility: Dynamically assembles task-specific workspace panels from the active user request.
+      location: frontend/src/TaskAdaptiveWorkspace.jsx:1243
+      relationship_to_domain: Existing task-centric shell for mission detail and workflow views.
+  interfaces_used_by_domain:
+    - interface: ChatResponse
+      location: backend/routes/api.py:566
+      usage_pattern: Carries task state, proof, steps, and UI components to the frontend.
+    - interface: TaskResponse
+      location: backend/routes/tasks_v2.py:31
+      usage_pattern: Returns task progress, substeps, and ETA to TaskPanel.
+    - interface: ProofOfExecution
+      location: backend/core/verification_system.py:57
+      usage_pattern: Serializable evidence payload for UI and export.
+    - interface: Principal
+      location: backend/core/auth.py:19
+      usage_pattern: Tenant, user, and role context for access control.
+  data_flow_involving_domain: User request enters /api/chat or /api/v2/tasks, is classified into task and security state, may pause for confirmation, executes substeps, emits proof and audit events, and is rendered in TaskPanel, AppClean, and TaskAdaptiveWorkspace with polling and proof badges.
+  key_relationships_to_domain:
+    - from: backend/routes/api.py:chat_endpoint
+      to: backend/core/task_engine.py:process_request
+      relationship: calls
+    - from: backend/routes/tasks_v2.py:create_task
+      to: backend/agent/orchestrator.py:create_task
+      relationship: calls
+    - from: backend/routes/tasks_v2.py:update_substep
+      to: backend/agent/orchestrator.py:complete_substep
+      relationship: calls
+    - from: backend/routes/tasks_v2.py:get_notifications
+      to: backend/database_supabase.py notifications storage path
+      relationship: calls
+    - from: frontend/src/components/TaskPanel.jsx
+      to: backend/routes/tasks_v2.py:get_user_tasks
+      relationship: calls
+    - from: frontend/src/AppClean.jsx
+      to: backend/routes/api.py:chat_endpoint
+      relationship: calls
+    - from: backend/main.py
+      to: backend/core/security.py, backend/core/performance.py, backend/core/monitoring.py, backend/core/logging_config.py
+      relationship: imports
+related_technology_stack:
+  languages_used_in_domain: [Python, JavaScript, JSX, SQL]
+  frameworks_used_in_domain:
+    - name: FastAPI
+      usage_in_domain: API routes, dependencies, WebSocket endpoint, health and metrics surfaces.
+    - name: React
+      usage_in_domain: Chat UI, task panels, adaptive workspace, proof and trust rendering.
+    - name: Vite
+      usage_in_domain: Frontend build and runtime.
+  libraries_used_in_domain:
+    - name: Pydantic
+      purpose_in_domain: Request and response schema validation.
+    - name: Supabase client
+      purpose_in_domain: Task, memory, workflow, and realtime persistence.
+    - name: Framer Motion
+      purpose_in_domain: Animated chat and task UI.
+    - name: React Markdown / remark-gfm
+      purpose_in_domain: Formatted AI response rendering.
+    - name: Lucide React
+      purpose_in_domain: Dashboard and status icons.
+    - name: psutil
+      purpose_in_domain: System metrics collection.
+    - name: qrcode
+      purpose_in_domain: Proof QR generation.
+    - name: aiohttp / httpx
+      purpose_in_domain: External API and LLM calls.
+  external_apis_used_in_domain:
+    - name: Supabase
+      integration_point: backend/database_supabase.py, backend/core/task_engine.py via task storage, backend/routes/tasks_v2.py notifications.
+    - name: FastAPI / Starlette
+      integration_point: backend/main.py and route modules.
+    - name: HTTP LLM providers
+      integration_point: backend/core/task_engine.py and backend/core/brain.py provider modules.
+related_conventions:
+  naming_patterns_in_domain: Task, status, progress, proof, confirmation, notification, health, and metrics vocabulary is reused across backend and frontend.
+  structure_of_domain: Backend separates request handling in backend/routes, execution and orchestration in backend/core and backend/agent, data access in backend/database_supabase.py, and telemetry/security in backend/main.py, backend/core/security.py, and backend/core/monitoring.py. Frontend separates the chat shell, task dashboard, and adaptive workspace.
+  error_handling_in_domain: Route code generally raises HTTPException on user-facing failures; core services often log and return dictionaries or False. In-memory fallbacks are common when Supabase is unavailable.
+  testing_in_domain: Behavioral tests focus on enum and dataclass contracts and real workflow behavior. API tests cover health, chat validation, rate limiting, CORS, input validation, and basic concurrency.
+  documentation_in_domain: Docstrings and module headers describe the intended workflow model, but some storage and route contracts are broader than the current schema.
+related_dependencies:
+  internal:
+    - component: backend/routes/api.py
+      relationship_to_domain: Top-level governed chat surface.
+      direction: inbound
+    - component: backend/routes/tasks_v2.py
+      relationship_to_domain: Task state and notification surface consumed by the frontend.
+      direction: inbound
+    - component: backend/core/task_engine.py
+      relationship_to_domain: Security-gated execution primitive.
+      direction: bidirectional
+    - component: backend/core/confirmation_manager.py
+      relationship_to_domain: Approval primitive for multi-step actions.
+      direction: bidirectional
+    - component: backend/core/verification_system.py
+      relationship_to_domain: Proof and audit primitive.
+      direction: bidirectional
+    - component: backend/core/logging_config.py
+      relationship_to_domain: Structured audit and log context provider.
+      direction: inbound
+    - component: backend/core/monitoring.py
+      relationship_to_domain: Metrics and health collector.
+      direction: inbound
+    - component: backend/database_supabase.py
+      relationship_to_domain: Persistence layer for tasks, memories, workflow sessions, and plugin executions.
+      direction: outbound
+    - component: frontend/src/components/TaskPanel.jsx
+      relationship_to_domain: Task dashboard consumer.
+      direction: inbound
+    - component: frontend/src/TaskAdaptiveWorkspace.jsx
+      relationship_to_domain: Task workspace shell.
+      direction: inbound
+    - component: frontend/src/AppClean.jsx
+      relationship_to_domain: Chat shell with proof and trust rendering.
+      direction: inbound
+  external:
+    - name: Supabase
+      purpose_for_domain: Persistent storage and realtime task updates.
+    - name: JWT / bearer auth
+      purpose_for_domain: Principal resolution and role gating.
+    - name: LLM APIs
+      purpose_for_domain: Intent parsing and response generation.
+    - name: Prometheus-style metrics format
+      purpose_for_domain: Operational telemetry export.
+    - name: QR code generation
+      purpose_for_domain: Proof verification artifacts.
+domain_security_considerations:
+  sensitive_areas:
+    - area: Approval bypass risk
+      location: backend/core/task_engine.py:368 and backend/core/confirmation_manager.py:111
+      concern: High-security tasks trigger confirmation in memory, but there is no persisted approval ledger in the current module.
+    - area: Evidence durability
+      location: backend/core/verification_system.py:456 and backend/core/verification_system.py:510
+      concern: Audit logs and proofs are stored in process memory, so evidence is not durable across restarts.
+    - area: Tenant and role enforcement
+      location: backend/core/auth.py:19 and backend/routes/tasks_v2.py:146
+      concern: Access control is principal-based, but some routes still rely on tenant-scoped data conventions rather than explicit role gates.
+    - area: Security headers and rate limiting
+      location: backend/core/security.py:1 and backend/main.py:337
+      concern: Security middleware exists, but it is separate from mission-specific authorization and approval policies.
+    - area: Task and dashboard polling
+      location: frontend/src/components/TaskPanel.jsx:24
+      concern: Polling depends on route and storage consistency; schema mismatches can surface as empty dashboards.
+  authentication_patterns_in_domain: Bearer JWT in non-dev environments; dev and test fallback headers are supported by get_current_principal.
+  authorization_patterns_in_domain: Role gate helper exists as require_role, while task routes enforce owner checks with principal.user_id.
+  data_validation_in_domain: Pydantic model validation in routes plus sanitizer and SQL injection checks in core validation modules.
+testing_patterns:
+  framework: pytest
+  coverage_areas: [route validation, health and metrics, security headers and rate limiting, task engine contracts, confirmation workflow, proof generation, monitoring primitives]
+  test_organization: Backend tests split between backend/tests for API and core behavior and tests for behavioral, integration, and e2e checks.
+  mock_patterns: [FastAPI TestClient, unittest.mock.patch, MagicMock and AsyncMock fixtures, in-memory behavior assertions]
+open_questions:
+  - question: Should mission approvals be persisted in the existing tasks schema or in a new approval ledger?
+    context: Current approval state is in memory in ConfirmationManager, while task persistence is generic and does not store approval history.
+    type: decision_blocker
+    affects: [backend/core/confirmation_manager.py, backend/database_supabase.py, backend/routes/tasks_v2.py]
+  - question: Should evidence artifacts live in Supabase tables, object storage, or both?
+    context: Proof and audit services currently return serialized proof data and keep audit logs in memory.
+    type: decision_blocker
+    affects: [backend/core/verification_system.py, backend/database_supabase.py, frontend/src/AppClean.jsx]
+  - question: Which frontend surface should become the canonical governed mission dashboard?
+    context: The workspace is split across App.jsx, AppClean.jsx, TaskPanel.jsx, and TaskAdaptiveWorkspace.jsx.
+    type: research
+    affects: [frontend/src/App.jsx, frontend/src/AppClean.jsx, frontend/src/TaskAdaptiveWorkspace.jsx, frontend/src/components/TaskPanel.jsx]
+  - question: Should the mission state model reuse TaskStatus or introduce a separate mission lifecycle enum?
+    context: There are at least two status vocabularies already: TaskStatus in task_engine.py and TaskStatus in agent/orchestrator.py.
+    type: decision_blocker
+    affects: [backend/core/task_engine.py, backend/agent/orchestrator.py, backend/routes/tasks_v2.py]
+  - question: How should compliance exports map to current proof and audit payloads?
+    context: Current proof and audit structures are serializable but not yet tied to an export pipeline.
+    type: nice_to_know
+    affects: [backend/core/verification_system.py, backend/routes/api.py, frontend/src/AppClean.jsx]
+gaps:
+  - area: Persistent approvals
+    description: No durable approval table or persisted approval reason capture was found; ConfirmationManager stores pending actions only in memory.
+    impact: decision_blocker
+    affects: [backend/core/confirmation_manager.py, backend/database_supabase.py]
+  - area: Persistent audit and evidence
+    description: Audit history and proof generation are in memory or returned as response payloads; there is no dedicated audit or evidence table in MIGRATION_SQL.
+    impact: decision_blocker
+    affects: [backend/core/verification_system.py, backend/database_supabase.py]
+  - area: Mission model
+    description: The current storage schema has generic tasks, workflow_sessions, and plugin_executions, but no dedicated governed mission table with lifecycle, policy, and trust metrics.
+    impact: research_blocker
+    affects: [backend/database_supabase.py, backend/routes/tasks_v2.py, backend/core/task_engine.py]
+  - area: Notifications storage
+    description: The task notifications route exists in backend/routes/tasks_v2.py, but the Supabase migration shown in backend/database_supabase.py does not define a notifications table.
+    impact: research_blocker
+    affects: [backend/routes/tasks_v2.py, backend/database_supabase.py, frontend/src/components/TaskPanel.jsx]
+  - area: Frontend trust dashboard
+    description: The frontend shows proof badges, task cards, and a trust footer, but no dedicated trust metrics dashboard or immutable audit viewer was identified in frontend/src.
+    impact: research_blocker
+    affects: [frontend/src/AppClean.jsx, frontend/src/components/TaskPanel.jsx, frontend/src/TaskAdaptiveWorkspace.jsx]
+  - area: Role-gated admin surfaces
+    description: Role-based authorization helpers exist, but no route-level admin, approver, or auditor screens were identified in the current frontend or backend route set.
+    impact: nice_to_know
+    affects: [backend/core/auth.py, frontend/src/App.jsx, frontend/src/AppClean.jsx]

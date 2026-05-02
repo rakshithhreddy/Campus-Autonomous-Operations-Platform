@@ -18,12 +18,13 @@ from ..core.intent_classifier import IntentClassifier
 from ..core.conversation_manager import get_conversation_manager
 # NEW: Import true AI chat
 from ..core.true_ai_chat import chat as true_ai_chat, get_conversation
+from ..core.auth import get_current_principal, Principal
 
 router = APIRouter()
 
 class AgentRequest(BaseModel):
     message: str
-    user_id: str = "default"
+    user_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
 
@@ -54,7 +55,8 @@ class ConfirmationRequest(BaseModel):
 @router.post("/process", response_model=AgentResponse)
 async def process_intent(
     request: AgentRequest,
-    app_request: Request
+    app_request: Request,
+    principal: Principal = Depends(get_current_principal),
 ):
     """
     Process user intent using TRUE AI CHAT.
@@ -67,7 +69,7 @@ async def process_intent(
         session_id = request.session_id or str(uuid.uuid4())
 
         # Use the new TRUE AI Chat system
-        result = await true_ai_chat(session_id, request.message, request.user_id)
+        result = await true_ai_chat(session_id, request.message, principal.user_id)
 
         # Ensure result is always a dict (not list)
         results_data = result.get("results")
@@ -113,12 +115,13 @@ async def process_intent(
 @router.post("/process_legacy", response_model=AgentResponse)
 async def process_intent_legacy(
     request: AgentRequest,
-    app_request: Request
+    app_request: Request,
+    principal: Principal = Depends(get_current_principal),
 ):
     """Legacy endpoint - redirects to true AI chat for compatibility"""
     # Just use the new AI chat system
     session_id = request.session_id or str(uuid.uuid4())
-    result = await true_ai_chat(session_id, request.message, request.user_id)
+    result = await true_ai_chat(session_id, request.message, principal.user_id)
     return AgentResponse(
         response=result.get("response", ""),
         intent={"type": "ai_determined"},
@@ -140,7 +143,10 @@ def get_destination_options() -> List[Dict[str, Any]]:
     ]
 
 @router.post("/select")
-async def handle_selection(request: SelectionRequest):
+async def handle_selection(
+    request: SelectionRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """Handle user selection in multi-stage conversation"""
     try:
         conversation_manager = get_conversation_manager()
@@ -149,6 +155,9 @@ async def handle_selection(request: SelectionRequest):
         session = conversation_manager.get_session(request.session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+        session_user_id = getattr(session, "user_id", None)
+        if session_user_id and session_user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
         
         # Process the selection
         result = await conversation_manager.process_user_response(
@@ -181,6 +190,7 @@ async def handle_selection(request: SelectionRequest):
             confirmation_manager.session_plans[request.session_id] = {
                 "plan": plan,
                 "user_input": session.initial_intent.get("original_input", ""),
+                "user_id": principal.user_id,
                 "created_at": session.created_at
             }
             
@@ -224,6 +234,7 @@ async def handle_selection(request: SelectionRequest):
                     confirmation_manager.session_plans[request.session_id] = {
                         "plan": plan,
                         "user_input": session.initial_intent.get("original_input", ""),
+                        "user_id": principal.user_id,
                         "created_at": session.created_at
                     }
                     
@@ -284,11 +295,18 @@ def generate_final_confirmation_message(plan: Dict[str, Any]) -> str:
     return message
 
 @router.post("/confirm")
-async def confirm_actions(request: ConfirmationRequest):
+async def confirm_actions(
+    request: ConfirmationRequest,
+    principal: Principal = Depends(get_current_principal),
+):
     """Handle user confirmation of actions"""
     try:
         confirmation_manager = get_confirmation_manager()
         plugin_manager = PluginManager()
+        session_plan = confirmation_manager.session_plans.get(request.session_id, {})
+        owner_user_id = session_plan.get("user_id")
+        if owner_user_id and owner_user_id != principal.user_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
         
         # Handle confirmation action
         if request.action == "approve_all":

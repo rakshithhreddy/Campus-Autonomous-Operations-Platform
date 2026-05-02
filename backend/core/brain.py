@@ -22,10 +22,11 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env", override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,8 @@ class Message:
 @dataclass
 class Session:
     id: str
+    owner_user_id: Optional[str] = None
+    tenant_id: Optional[str] = None
     messages: List[Message] = field(default_factory=list)
     user_data: Dict[str, Any] = field(default_factory=dict)
     pending_confirmation: Optional[Dict[str, Any]] = None
@@ -197,16 +200,39 @@ class AIBrain:
 
         return "\n".join(lines)
 
-    def _build_memory_context(self, user_id: str) -> str:
+    async def _build_memory_context(self, user_id: str) -> str:
         """Build user memory context for the system prompt"""
-        memory = db.get_memory(user_id)
-        if not memory:
-            return ""
+        try:
+            from ..database_supabase import get_db
+            db_ops = get_db()
+            
+            # 1. Fetch user profile
+            user = await db_ops.get_or_create_user(user_id)
+            
+            # 2. Fetch manual memories
+            memories = await db_ops.get_user_memories(user_id)
+            
+            if not user.preferences and not memories and not user.name:
+                return ""
 
-        lines = ["USER CONTEXT (from memory):"]
-        for key, value in memory.items():
-            lines.append(f"- {key}: {value}")
-        return "\n".join(lines)
+            lines = ["USER CONTEXT (from memory):"]
+            if user.name:
+                lines.append(f"- Name: {user.name}")
+            
+            if user.preferences:
+                lines.append("- Preferences:")
+                for k, v in user.preferences.items():
+                    lines.append(f"  - {k}: {v}")
+                    
+            if memories:
+                lines.append("- Remembered Facts:")
+                for m in memories:
+                    lines.append(f"  - {m.key}: {m.value}")
+                    
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"[BRAIN] Error building memory context: {e}")
+            return ""
 
     async def process(
         self,
@@ -220,6 +246,10 @@ class AIBrain:
         Collects all agent events and returns final result.
         """
         session = db.get_session(session_id)
+        if session.owner_user_id and session.owner_user_id != user_id:
+            raise PermissionError("Session does not belong to the authenticated user")
+        if not session.owner_user_id:
+            session.owner_user_id = user_id
         session.messages.append(Message(role=MessageType.USER, content=user_message))
 
         # Check if we have a pending confirmation
@@ -231,7 +261,7 @@ class AIBrain:
 
         # Build feedback and memory context
         feedback_context = self._build_feedback_context(session, user_id)
-        memory_context = self._build_memory_context(user_id)
+        memory_context = await self._build_memory_context(user_id)
 
         full_context = ""
         if memory_context:
@@ -246,20 +276,29 @@ class AIBrain:
         ask_data = None
         options = None
 
-        async for event in self.agent.run(
-            user_message, history, user_id, full_context,
-            session_id=session_id,
-        ):
-            steps.append(event.to_dict())
+        try:
+            async for event in self.agent.run(
+                user_message, history, user_id, full_context,
+                session_id=session_id,
+            ):
+                steps.append(event.to_dict())
 
-            if event.type == "answer":
-                final_answer = event.content
-            elif event.type == "ask":
-                ask_data = event.data
-                final_answer = event.content
-            elif event.type == "confirm_needed" or event.type == "integration_needed":
-                confirm_data = event.data
-                final_answer = event.content
+                if event.type == "answer":
+                    final_answer = event.content
+                elif event.type == "ask":
+                    ask_data = event.data
+                    final_answer = event.content
+                elif event.type == "confirm_needed" or event.type == "integration_needed":
+                    confirm_data = event.data
+                    final_answer = event.content
+        except Exception as agent_err:
+            # If the agent generator raises (e.g. all AI providers failed),
+            # capture the error as the final answer so the user sees what went wrong
+            # instead of a generic "empty response" message.
+            error_text = str(agent_err)
+            logger.error(f"[BRAIN] Agent execution error: {error_text}", exc_info=True)
+            final_answer = f"AI service error: {error_text}"
+            steps.append({"type": "error", "content": error_text})
 
         # Record agent execution as an orchestrated "workflow" task for the Tasks panel.
         created_task_id: Optional[str] = None
@@ -299,18 +338,20 @@ class AIBrain:
 
         # If confirmation needed for risky action
         if confirm_data:
+            confirm_data["task_id"] = created_task_id
             session.pending_confirmation = confirm_data
             code_preview = confirm_data.get("code") if confirm_data.get("action_type") == "code" else None
             return {
                 "message": final_answer,
                 "type": "task",
                 "status": "confirm",
-                "ui_components": confirm_data if confirm_data.get("service") else None,
+                "ui_components": confirm_data,
                 "code_preview": code_preview,
                 "session_id": session_id,
                 "steps": steps,
                 "task_id": created_task_id,
             }
+
 
         return {
             "message": final_answer,
@@ -515,7 +556,14 @@ class AIBrain:
         )
 
         orchestrator.active_tasks[task_id] = task
+        try:
+            await orchestrator._save_task(task)
+            await orchestrator._notify_task_update(task)
+        except Exception:
+            pass
+            
         return task_id
+
 
     async def process_stream(self, session_id: str, user_message: str, user_id: str = "default"):
         """
@@ -523,6 +571,10 @@ class AIBrain:
         Yields AgentEvent objects for SSE streaming.
         """
         session = db.get_session(session_id)
+        if session.owner_user_id and session.owner_user_id != user_id:
+            raise PermissionError("Session does not belong to the authenticated user")
+        if not session.owner_user_id:
+            session.owner_user_id = user_id
         session.messages.append(Message(role=MessageType.USER, content=user_message))
 
         # Check for pending confirmation
@@ -534,7 +586,7 @@ class AIBrain:
         # Build context
         history = self._build_history(session)
         feedback_context = self._build_feedback_context(session, user_id)
-        memory_context = self._build_memory_context(user_id)
+        memory_context = await self._build_memory_context(user_id)
 
         full_context = ""
         if memory_context:
@@ -544,26 +596,33 @@ class AIBrain:
 
         final_answer = ""
 
-        async for event in self.agent.run(
-            user_message, history, user_id, full_context,
-            session_id=session_id,
-        ):
-            yield event
+        try:
+            async for event in self.agent.run(
+                user_message, history, user_id, full_context,
+                session_id=session_id,
+            ):
+                yield event
 
-            if event.type == "answer":
-                final_answer = event.content
-            elif event.type == "ask":
-                session.pending_confirmation = {
-                    "type": "ask",
-                    "options": event.data.get("options", []),
-                    "scratchpad": event.data.get("scratchpad", []),
-                    "history": event.data.get("history", []),
-                    "context": event.data.get("context", {}),
-                }
-                final_answer = event.content
-            elif event.type == "confirm_needed" or event.type == "integration_needed":
-                session.pending_confirmation = event.data
-                final_answer = event.content
+                if event.type == "answer":
+                    final_answer = event.content
+                elif event.type == "ask":
+                    session.pending_confirmation = {
+                        "type": "ask",
+                        "options": event.data.get("options", []),
+                        "scratchpad": event.data.get("scratchpad", []),
+                        "history": event.data.get("history", []),
+                        "context": event.data.get("context", {}),
+                    }
+                    final_answer = event.content
+                elif event.type == "confirm_needed" or event.type == "integration_needed":
+                    session.pending_confirmation = event.data
+                    final_answer = event.content
+        except Exception as agent_err:
+            error_text = str(agent_err)
+            logger.error(f"[BRAIN] Stream agent error: {error_text}", exc_info=True)
+            final_answer = f"AI service error: {error_text}"
+            yield AgentEvent(type="error", content=final_answer)
+            yield AgentEvent(type="answer", content=final_answer)
 
         if final_answer:
             session.messages.append(Message(role=MessageType.AI, content=final_answer))
@@ -594,7 +653,7 @@ class AIBrain:
 
             # Build context string
             feedback_context = self._build_feedback_context(session, user_id)
-            memory_context = self._build_memory_context(user_id)
+            memory_context = await self._build_memory_context(user_id)
             full_context = ""
             if memory_context:
                 full_context = memory_context + "\n\n"
@@ -645,7 +704,7 @@ class AIBrain:
                     "message": final_answer,
                     "type": "task",
                     "status": "confirm",
-                    "ui_components": confirm_data if confirm_data.get("service") else None,
+                    "ui_components": confirm_data,
                     "code_preview": confirm_data.get("code"),
                     "session_id": session.id,
                     "steps": steps,
@@ -688,6 +747,7 @@ class AIBrain:
                     session_id=session.id,
                     user_message=user_message,
                     steps=steps,
+                    parent_task_id=pending.get("task_id"),
                 )
             except Exception as e:
                 logger.warning(f"[BRAIN] Task bridge failed (confirmation): {e}")
@@ -731,7 +791,7 @@ class AIBrain:
             })
 
             feedback_context = self._build_feedback_context(session, user_id)
-            memory_context = self._build_memory_context(user_id)
+            memory_context = await self._build_memory_context(user_id)
             full_context = ""
             if memory_context:
                 full_context = memory_context + "\n\n"

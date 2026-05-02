@@ -12,12 +12,15 @@ import {
 import TaskPanel from './components/TaskPanel'
 import AISettings from './components/AISettings'
 import IntegrationsHub from './components/IntegrationsHub'
+import GovernanceHub from './components/GovernanceHub'
+import FacultyEmailDashboard from './components/FacultyEmailDashboard'
 import UIComponentRenderer from './components/InteractiveUI'
 import './App.css'
 import TaskAdaptiveWorkspace from './TaskAdaptiveWorkspace'
 
 
 import { apiUrl } from './lib/apiBase'
+import { getDevAuthHeaders } from './lib/authHeaders'
 
 const stepIcons = {
   thinking: Brain, action: Zap, code_exec: Code2, action_result: CheckCircle2,
@@ -73,6 +76,8 @@ function App() {
   const [taskRefreshTrigger, setTaskRefreshTrigger] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [showIntegrations, setShowIntegrations] = useState(false)
+  const [showGovernance, setShowGovernance] = useState(false)
+  const [showFacultyEmail, setShowFacultyEmail] = useState(false)
   const [hasAIIdentity, setHasAIIdentity] = useState(null)
   const [userId, setUserId] = useState(null)
   const endRef = useRef(null)
@@ -114,9 +119,10 @@ function App() {
     if (!userId) return
     const check = async () => {
       try {
-        const res = await fetch(apiUrl(`/api/identity/status/${userId}`))
-        const data = await res.json()
-        setHasAIIdentity(data.has_identity)
+        const res = await fetch(apiUrl(`/api/identity/status/${userId}`), { headers: getDevAuthHeaders() })
+        let data = {}
+        try { data = await res.json() } catch (_) { /* invalid JSON */ }
+        setHasAIIdentity(data.has_identity || false)
       } catch { setHasAIIdentity(false) }
     }
     check()
@@ -133,8 +139,26 @@ function App() {
     setInput(''); setLoading(true); setPendingConfirm(false)
     setMessages(prev => [...prev, { role: 'user', text: msg, timestamp: new Date() }])
     try {
-      const res = await fetch(apiUrl('/api/chat'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg, session_id: sessionId, user_id: userId }) })
-      const data = await res.json()
+      const res = await fetch(apiUrl('/api/chat'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
+        body: JSON.stringify({ message: msg, session_id: sessionId }),
+      })
+
+      // Safe JSON parse — guard against empty or non-JSON body
+      let data = {}
+      const rawText = await res.text()
+      if (rawText) {
+        try { data = JSON.parse(rawText) } catch (_) {
+          data = { message: `Server returned invalid response (status ${res.status})`, type: 'error' }
+        }
+      }
+
+      if (!res.ok) {
+        const errMsg = data?.detail || data?.message || data?.error || `Server error (${res.status})`
+        throw new Error(errMsg)
+      }
+
       setSessionId(data.session_id)
       setMessages(prev => [...prev, { role: 'ai', text: data.message, type: data.type, status: data.status, need: data.need, ui_components: data.ui_components, proof: data.proof, result: data.result, steps: data.steps, options: data.options, timestamp: new Date(), responseTime: data.response_time_ms }])
       if (data.task_id) setTaskRefreshTrigger(prev => prev + 1)
@@ -146,25 +170,35 @@ function App() {
       if (data.status === 'confirm') setPendingConfirm(true)
       if (data.status === 'done' || data.status === 'success') setTaskRefreshTrigger(prev => prev + 1)
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'error', text: 'Connection failed. Check if server is running.', timestamp: new Date() }])
+      const isNetworkError = err instanceof TypeError && err.message.includes('fetch')
+      const errText = isNetworkError ? 'Cannot connect to server. Make sure the backend is running on port 8000.' : err.message
+      setMessages(prev => [...prev, { role: 'error', text: errText, timestamp: new Date() }])
     } finally { setLoading(false) }
   }
 
   const handleAction = async (action, buttonId, metadata) => {
     if (loading) return; setLoading(true)
     try {
-      const res = await fetch(apiUrl('/api/chat/action'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, button_id: buttonId, metadata, session_id: sessionId, user_id: userId }) })
-      const data = await res.json()
+      const res = await fetch(apiUrl('/api/chat/action'), { method: 'POST', headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() }, body: JSON.stringify({ action, button_id: buttonId, metadata, session_id: sessionId }) })
+      // Safe JSON parse — guard against empty or non-JSON body
+      let data = {}
+      const rawText = await res.text()
+      if (rawText) {
+        try { data = JSON.parse(rawText) } catch (_) {
+          data = { message: `Server returned invalid response (status ${res.status})`, type: 'error' }
+        }
+      }
+      if (!res.ok) throw new Error(data?.detail?.error || data?.detail || data?.message || `Server error (${res.status})`)
       if (data.action === 'redirect' && data.url) { window.open(data.url, '_blank'); setLoading(false); return }
       setSessionId(data.session_id)
-      setMessages(prev => [...prev, { role: 'ai', text: data.message, type: data.type, status: data.status, ui_components: data.ui_components, proof: data.proof, result: data.result, timestamp: new Date(), responseTime: data.response_time_ms }])
+      setMessages(prev => [...prev, { role: 'ai', text: data.message || 'Action completed.', type: data.type, status: data.status, ui_components: data.ui_components, proof: data.proof, result: data.result, timestamp: new Date(), responseTime: data.response_time_ms }])
       const needsIntegration = Array.isArray(data.steps) && data.steps.some(s => {
         const d = s?.data || {}
         return d.requires_connection || d.required_integration || (d._meta && d._meta.error === 'integration_required')
       })
       if (needsIntegration) setShowIntegrations(true)
       if (data.status === 'done' || data.status === 'success') setTaskRefreshTrigger(prev => prev + 1)
-    } catch { setMessages(prev => [...prev, { role: 'error', text: 'Failed to process action.' }]) }
+    } catch (e) { setMessages(prev => [...prev, { role: 'error', text: e.message || 'Failed to process action.' }]) }
     finally { setLoading(false) }
   }
 
@@ -173,7 +207,7 @@ function App() {
   const fmtTime = d => d ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
 
   return (
-    <TaskAdaptiveWorkspace 
+    <TaskAdaptiveWorkspace
       messages={messages}
       input={input}
       setInput={setInput}
@@ -188,10 +222,16 @@ function App() {
       setShowSettings={setShowSettings}
       showIntegrations={showIntegrations}
       setShowIntegrations={setShowIntegrations}
+      showGovernance={showGovernance}
+      setShowGovernance={setShowGovernance}
+      showFacultyEmail={showFacultyEmail}
+      setShowFacultyEmail={setShowFacultyEmail}
       showTaskPanel={showTaskPanel}
       setShowTaskPanel={setShowTaskPanel}
       SettingsPanel={AISettings}
       IntegrationsPanel={IntegrationsHub}
+      GovernancePanel={GovernanceHub}
+      FacultyEmailPanel={FacultyEmailDashboard}
       TaskPanelComponent={() => (
         <TaskPanel
           userId={userId}

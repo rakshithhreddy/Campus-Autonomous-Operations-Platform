@@ -17,7 +17,7 @@ except ImportError:
     Client = None
 
 # Configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://hpqmcdygbjdmvxfmvucf.supabase.co")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # Use anon/service key
 SUPABASE_DB_URL = os.getenv("DATABASE_URL", "")  # Direct PostgreSQL connection
 
@@ -29,12 +29,12 @@ def get_supabase_client() -> Optional[Client]:
     """Get or create Supabase client"""
     global _supabase_client
     
-    if _supabase_client is None and SUPABASE_AVAILABLE and SUPABASE_KEY:
+    if _supabase_client is None and SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
         try:
             _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-            print("[DB] ✅ Supabase client initialized")
+            print("[DB] [OK] Supabase client initialized")
         except Exception as e:
-            print(f"[DB] ❌ Supabase init error: {e}")
+            print(f"[DB] [ERROR] Supabase init error: {e}")
             return None
     
     return _supabase_client
@@ -45,17 +45,17 @@ async def init_db():
     client = get_supabase_client()
     
     if client is None:
-        print("[DB] ⚠️ Supabase not configured. Set SUPABASE_URL and SUPABASE_KEY")
+        print("[DB] [WARN] Supabase not configured. Set SUPABASE_URL and SUPABASE_KEY")
         print("[DB] System will run in memory-only mode")
         return False
     
     try:
         # Test connection by querying system tables
         result = client.table("tasks").select("id").limit(1).execute()
-        print("[DB] ✅ Connected to Supabase PostgreSQL")
+        print("[DB] [OK] Connected to Supabase PostgreSQL")
         return True
     except Exception as e:
-        print(f"[DB] ⚠️ Connection test failed: {e}")
+        print(f"[DB] [WARN] Connection test failed: {e}")
         print("[DB] Please run the SQL migration to create tables")
         return False
 
@@ -141,6 +141,125 @@ CREATE TABLE IF NOT EXISTS workflow_sessions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Mission governance tables
+CREATE TABLE IF NOT EXISTS policy_rules (
+    rule_id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    risk_level VARCHAR(50) NOT NULL,
+    keywords JSONB DEFAULT '[]',
+    required_roles JSONB DEFAULT '[]',
+    min_approvals INTEGER DEFAULT 1,
+    active BOOLEAN DEFAULT TRUE,
+    version VARCHAR(50) DEFAULT 'v1',
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS missions (
+    mission_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    state VARCHAR(50) NOT NULL DEFAULT 'draft',
+    policy_version VARCHAR(50) NOT NULL DEFAULT 'v1',
+    trace_completeness NUMERIC(6,2) DEFAULT 0,
+    policy_compliance NUMERIC(6,2) DEFAULT 0,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE TABLE IF NOT EXISTS mission_steps (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mission_id UUID REFERENCES missions(mission_id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    action_type VARCHAR(255),
+    risk_level VARCHAR(50) DEFAULT 'low',
+    requires_approval BOOLEAN DEFAULT FALSE,
+    approver_roles JSONB DEFAULT '[]',
+    state VARCHAR(50) DEFAULT 'pending',
+    owner_role VARCHAR(100),
+    approval_decision_id UUID,
+    evidence_artifact_ids JSONB DEFAULT '[]',
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS approval_decisions (
+    decision_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mission_id UUID REFERENCES missions(mission_id) ON DELETE CASCADE,
+    step_id UUID REFERENCES mission_steps(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    approver_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    approver_roles JSONB DEFAULT '[]',
+    decision VARCHAR(50) NOT NULL,
+    reason TEXT NOT NULL,
+    policy_version VARCHAR(50) NOT NULL DEFAULT 'v1',
+    policy_rule_id VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS mission_state_transitions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mission_id UUID REFERENCES missions(mission_id) ON DELETE CASCADE,
+    actor_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    previous_state VARCHAR(50),
+    next_state VARCHAR(50) NOT NULL,
+    reason TEXT,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS evidence_artifacts (
+    artifact_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mission_id UUID REFERENCES missions(mission_id) ON DELETE CASCADE,
+    step_id UUID REFERENCES mission_steps(id) ON DELETE SET NULL,
+    tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(100) NOT NULL,
+    file_path TEXT NOT NULL,
+    content_hash VARCHAR(255) NOT NULL,
+    previous_hash VARCHAR(255),
+    classification VARCHAR(50) DEFAULT 'internal',
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    event_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    mission_id UUID REFERENCES missions(mission_id) ON DELETE CASCADE,
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+    action VARCHAR(255) NOT NULL,
+    resource_id VARCHAR(255),
+    previous_state VARCHAR(255),
+    next_state VARCHAR(255),
+    reason TEXT,
+    policy_version VARCHAR(50),
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS trust_metrics_daily (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+    metric_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    mission_count INTEGER DEFAULT 0,
+    trace_completeness NUMERIC(6,2) DEFAULT 0,
+    policy_compliance NUMERIC(6,2) DEFAULT 0,
+    approval_backlog INTEGER DEFAULT 0,
+    fallback_frequency NUMERIC(6,2) DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(tenant_id, metric_date)
+);
+
 -- Plugin executions log
 CREATE TABLE IF NOT EXISTS plugin_executions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -161,6 +280,14 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_memories_user_key ON memories(user_id, key);
 CREATE INDEX IF NOT EXISTS idx_workflow_sessions_user ON workflow_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_missions_user_id ON missions(user_id);
+CREATE INDEX IF NOT EXISTS idx_missions_tenant_id ON missions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);
+CREATE INDEX IF NOT EXISTS idx_mission_steps_mission_id ON mission_steps(mission_id);
+CREATE INDEX IF NOT EXISTS idx_approval_decisions_mission_id ON approval_decisions(mission_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_artifacts_mission_id ON evidence_artifacts(mission_id);
+CREATE INDEX IF NOT EXISTS idx_audit_events_mission_id ON audit_events(mission_id);
+CREATE INDEX IF NOT EXISTS idx_trust_metrics_daily_tenant_date ON trust_metrics_daily(tenant_id, metric_date);
 
 -- Row Level Security (RLS) Policies
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -169,6 +296,14 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE policy_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE missions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mission_steps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE approval_decisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mission_state_transitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE evidence_artifacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trust_metrics_daily ENABLE ROW LEVEL SECURITY;
 
 -- Realtime subscriptions (enable for specific tables)
 ALTER PUBLICATION supabase_realtime ADD TABLE tasks;
@@ -196,6 +331,15 @@ CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_workflow_sessions_updated_at BEFORE UPDATE ON workflow_sessions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_policy_rules_updated_at BEFORE UPDATE ON policy_rules
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_missions_updated_at BEFORE UPDATE ON missions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_mission_steps_updated_at BEFORE UPDATE ON mission_steps
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 """
 
@@ -376,6 +520,42 @@ class DatabaseOperations:
         except Exception as e:
             print(f"[DB] User error: {e}")
             return User(id=external_id, external_id=external_id, name=name)
+            
+    async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Optional[User]:
+        """Update user profile"""
+        if self._use_memory():
+            # In memory, we map external_id to user_data, but sometimes id == external_id
+            for ext_id, u_data in self._in_memory_store["users"].items():
+                if u_data.get("id") == user_id or ext_id == user_id:
+                    self._in_memory_store["users"][ext_id].update(updates)
+                    return User.from_dict(self._in_memory_store["users"][ext_id])
+            
+            # If user not found, create it with the updates
+            # This handles the case where we're updating a user that hasn't been explicitly created yet
+            user_data = {"id": user_id, "external_id": user_id}
+            user_data.update(updates)
+            self._in_memory_store["users"][user_id] = user_data
+            return User.from_dict(user_data)
+            
+        try:
+            result = self.client.table("users").update(updates).eq("id", user_id).execute()
+            # If id is external_id, fallback to eq("external_id")
+            if not result.data:
+                result = self.client.table("users").update(updates).eq("external_id", user_id).execute()
+            if result.data:
+                return User.from_dict(result.data[0])
+            # If Supabase update didn't find the user, update in memory as fallback
+            user_data = {"id": user_id, "external_id": user_id}
+            user_data.update(updates)
+            self._in_memory_store["users"][user_id] = user_data
+            return User.from_dict(user_data)
+        except Exception as e:
+            print(f"[DB] Update user error: {e}")
+            # Fallback to memory update when Supabase fails
+            user_data = {"id": user_id, "external_id": user_id}
+            user_data.update(updates)
+            self._in_memory_store["users"][user_id] = user_data
+            return User.from_dict(user_data)
     
     # ---- Tasks ----
     async def create_task(self, task: Task) -> Task:

@@ -1,0 +1,1097 @@
+plan_id: 20260421-governed-execution
+objective: "Implement all remaining items in IMPLEMENTATION_CHECKLIST.md in the fastest safe sequence"
+created_at: "2026-04-21"
+created_by: "GitHub Copilot"
+status: pending
+research_confidence: medium
+plan_metrics:
+  wave_1_task_count: 4
+  total_dependencies: 21
+  risk_score: high
+tldr: |
+  Wave 1 establishes the auth boundary, governance persistence, runtime security defaults, and secret cleanup. Wave 2 removes client-controlled user_id flows and introduces the policy/state machine backbone. Wave 3 adds trust metrics, evidence custody, execution controls, and workflow packs. Wave 4 adds the governance UI, Wave 5 hardens CI and validates the end-to-end journeys, and the final waves simplify legacy orchestration paths and publish the docs/ADRs needed for pilot readiness.
+open_questions: []
+gaps: []
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: "Authentication is partially wired, but one route still trusts a client-supplied user_id and leaks tenant data."
+      likelihood: medium
+      impact: critical
+      mitigation: "Gate every business route behind get_current_principal, add denial tests for missing and mismatched principals, and require tenant-scoped helpers in shared storage code."
+    - scenario: "Governance migrations or immutable records break existing task/history data during rollout."
+      likelihood: medium
+      impact: high
+      mitigation: "Use additive migrations, backfill scripts, and dual-read compatibility until the new tables and DTOs are proven in staging."
+    - scenario: "Approval policy or UI gating becomes too strict and blocks normal institutional workflows."
+      likelihood: medium
+      impact: high
+      mitigation: "Ship the policy engine with explicit defaults, shadow verification, and staged rollout flags before enforcing hard blocks in production."
+  assumptions:
+    - "FastAPI backend, Supabase storage, and React/Vite frontend remain the core stack."
+    - "backend/core/auth.py is the canonical request-principal dependency."
+    - "The active frontend shell stays rooted at frontend/src/main.jsx -> frontend/src/App.jsx."
+    - "Governance features can be introduced behind feature flags before full rollout."
+implementation_specification:
+  code_structure: |
+    Add a new backend/core/governance package for policy evaluation, state transitions, evidence custody, trust scoring, and execution controls. Keep route modules thin: resolve Principal once, validate role/tenant access, and delegate to governed services. Add a dedicated governance dashboard in the active React app and preserve legacy orchestration surfaces only as compatibility shims until the migration is complete.
+  affected_areas:
+    - "backend/core/auth.py and backend/main.py for principal resolution and startup enforcement"
+    - "backend/database_supabase.py, backend/agent/orchestrator.py, and backend/core/brain.py for tenant-scoped access"
+    - "backend/routes/api.py, backend/routes/tasks_v2.py, backend/routes/tasks.py, backend/routes/identity.py, backend/routes/integrations.py, backend/routes/messaging.py"
+    - "backend/core/governance/* for policies, approvals, evidence, telemetry, and execution controls"
+    - "frontend/src/App.jsx and new governance components for approvals, evidence, and trust metrics"
+    - "CI/CD, security scanning, docs, and legacy script consolidation"
+  component_details:
+    - component: "backend/core/auth.py"
+      responsibility: "Resolve authenticated principals and role checks once per request."
+      interfaces:
+        - "get_current_principal(request, credentials) -> Principal"
+        - "require_role(principal, allowed_roles) -> None"
+      dependencies: []
+      integration_points:
+        - "Mounted on every business router via Depends(get_current_principal)"
+        - "Supplies request.state.principal or equivalent request context"
+    - component: "backend/core/governance/policy_engine.py"
+      responsibility: "Classify risk, calculate approval thresholds, and emit policy decisions."
+      interfaces:
+        - "evaluate_policy(mission) -> PolicyDecision"
+        - "get_required_approvers(risk_level, role) -> list"
+      dependencies:
+        - component: "backend/core/governance/models.py"
+          relationship: "Consumes immutable policy and approval record models"
+      integration_points:
+        - "Mission planning and approval queue generation"
+        - "Governance dashboard and evidence exports"
+    - component: "backend/core/governance/mission_state_machine.py"
+      responsibility: "Enforce locked mission transitions and record audit trail entries."
+      interfaces:
+        - "transition(mission_id, next_state, actor) -> MissionState"
+        - "is_valid_transition(current_state, next_state) -> bool"
+      dependencies:
+        - component: "backend/core/governance/models.py"
+          relationship: "Uses mission status and audit record schemas"
+      integration_points:
+        - "Task execution engine"
+        - "Approval rejection and re-plan flows"
+    - component: "backend/core/governance/evidence_vault.py"
+      responsibility: "Store artifact hashes, origin metadata, and chain-of-custody records."
+      interfaces:
+        - "store_artifact(metadata, bytes_or_uri) -> EvidenceRecord"
+        - "build_bundle(mission_id) -> EvidenceBundle"
+      dependencies:
+        - component: "backend/database_supabase.py"
+          relationship: "Persists immutable evidence metadata"
+      integration_points:
+        - "Exportable evidence bundles"
+        - "Procurement/pilot proof generation"
+    - component: "frontend/src/components/GovernanceDashboard.jsx"
+      responsibility: "Render approvals, mission timeline, evidence explorer, and trust metrics."
+      interfaces:
+        - "GovernanceDashboard({ missionId, trustMetrics, approvals, evidence })"
+      dependencies:
+        - component: "backend/core/governance/trust_metrics.py"
+          relationship: "Consumes trust metric DTOs from the backend"
+      integration_points:
+        - "Active App.jsx shell"
+        - "Task panel and export actions"
+contracts:
+  - from_task: TASK-001
+    to_task: TASK-002
+    interface: "PrincipalContext"
+    format: "JSON object with user_id, tenant_id, roles, and request-scoped auth metadata"
+  - from_task: TASK-005
+    to_task: TASK-006
+    interface: "GovernanceRecord"
+    format: "SQL tables plus Pydantic models with immutable policy_version, approver_id, timestamp, and reason fields"
+  - from_task: TASK-006
+    to_task: TASK-007
+    interface: "MissionDecisionEnvelope"
+    format: "JSON DTO containing mission_id, state, policy_version, approval_result, and audit references"
+  - from_task: TASK-007
+    to_task: TASK-010
+    interface: "TrustMetricBundle"
+    format: "JSON DTO containing trace_completeness, policy_compliance, approval_latency, and fallback_frequency"
+  - from_task: TASK-009
+    to_task: TASK-011
+    interface: "WorkflowPackManifest"
+    format: "JSON manifest describing pack name, steps, risk categories, approvals, and export hooks"
+tasks:
+  - id: TASK-001
+    title: Bind request principal and tenant context
+    description: |
+      Install the canonical authenticated request context in backend/core/auth.py and backend/main.py.
+      Add backend/core/tenant_context.py so downstream code reads a server-resolved principal instead of trusting client-supplied identifiers.
+      This is the base security wave for checklist items 1, 2, 4, and 5.
+    wave: 1
+    agent: gem-implementer
+    prototype: false
+    covers: ["1", "2", "4", "5"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: backend/main.py
+        description: App startup, middleware registration, and router mounting.
+      - path: backend/core/auth.py
+        description: Existing principal resolver and role gate helpers.
+      - path: backend/config.py
+        description: Production setting validation and auth secret checks.
+    diagnosis:
+      root_cause: Requests are not uniformly bound to an authenticated principal and tenant context.
+      fix_recommendations: Resolve the principal once per request, attach it to request state, and fail closed when auth is missing or invalid.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 220
+    focus_area: auth-boundary
+    verification:
+      - "Unauthenticated business requests return 401 outside dev/test modes."
+      - "Dev-only bypass requires explicit dev headers and never activates in production."
+      - "Request state exposes a normalized principal object for downstream handlers."
+    acceptance_criteria:
+      - "Every business request resolves a server-authenticated principal before route logic runs."
+      - "Tenant and user context are attached once and reused instead of trusting incoming user_id values."
+      - "Auth failures are logged without leaking secrets."
+    failure_modes:
+      - scenario: Dev bypass leaks into production or staging.
+        likelihood: medium
+        impact: critical
+        mitigation: Gate bypass strictly on environment and add startup tests that fail when dev headers are accepted outside dev-like modes.
+    tech_stack: ["FastAPI", "Pydantic", "Python 3.11"]
+    test_coverage: "auth dependency tests, prod-denial tests, request-context smoke tests"
+
+  - id: TASK-002
+    title: Remove default user_id behavior from shared core services
+    description: |
+      Refactor backend/core/brain.py, backend/database_supabase.py, and backend/agent/orchestrator.py so service access is principal-scoped instead of falling back to default user ids.
+      This removes the last shared-service paths that can bypass tenant isolation even after the route layer is fixed.
+      It directly supports checklist items 3, 4, and 5.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: ["3", "4", "5"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-001"]
+    conflicts_with: []
+    context_files:
+      - path: backend/core/brain.py
+        description: Session and memory handling currently stores user state by user_id.
+      - path: backend/database_supabase.py
+        description: Task and memory helpers still accept optional user_id defaults.
+      - path: backend/agent/orchestrator.py
+        description: Orchestrator task storage and lookup still key off user_id.
+    diagnosis:
+      root_cause: Shared services still accept optional or default user_id inputs and can be called without a validated principal.
+      fix_recommendations: Require explicit principal-scoped parameters, derive tenant filters from request context, and remove fallback defaults for business data access.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 260
+    focus_area: tenant-scoping
+    verification:
+      - "No shared service method uses a default user_id for reads or writes."
+      - "Cross-tenant reads are rejected or filtered at the service layer."
+      - "Task, memory, and orchestrator helpers accept principal-scoped inputs only."
+    acceptance_criteria:
+      - "Business data helpers require principal-derived user and tenant scope."
+      - "Legacy default user fallbacks are removed from shared service entrypoints."
+      - "Storage access is tenant-isolated by construction, not convention."
+    failure_modes:
+      - scenario: A hidden fallback path still resolves to a default user and leaks data.
+        likelihood: medium
+        impact: critical
+        mitigation: Add tests that search for default user fallbacks, run principal-scoped integration checks, and reject any business read without tenant filters.
+    tech_stack: ["FastAPI", "Supabase", "Python 3.11"]
+    test_coverage: "service-layer isolation tests, memory/task helper tests, tenant-filter smoke checks"
+
+  - id: TASK-003
+    title: Refactor chat and task routes to principal-scoped access
+    description: |
+      Update backend/routes/api.py, backend/routes/tasks_v2.py, and backend/routes/tasks.py so chat and task endpoints never trust caller-supplied user ids.
+      Pass the authenticated principal through to brain and task services, and reject mismatched identifiers at the edge.
+      This closes checklist items 1 through 5 and the user-facing route portion of item 72.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: ["1-5", "72"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-001", "TASK-002"]
+    conflicts_with: []
+    context_files:
+      - path: backend/routes/api.py
+        description: Chat and chat action endpoints currently accept user_id in request bodies.
+      - path: backend/routes/tasks_v2.py
+        description: Orchestrated task endpoints already depend on principal but still need route cleanup.
+      - path: backend/routes/tasks.py
+        description: Legacy task endpoints still expose user_id-shaped response contracts.
+    diagnosis:
+      root_cause: Public task and chat routes still expose or accept user_id in ways that can drift away from authenticated identity.
+      fix_recommendations: Normalize route payloads around Principal, map user_id only from server context, and remove any body/query trust in caller-supplied identity.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 240
+    focus_area: api-route-hardening
+    verification:
+      - "Chat and task endpoints reject mismatched user_id inputs."
+      - "All route handlers derive identity from the authenticated principal."
+      - "Task listing and lookup behavior stays tenant isolated after the refactor."
+    acceptance_criteria:
+      - "Client-supplied user ids no longer control chat or task data access."
+      - "The active API contract uses server-derived identity for task and memory operations."
+      - "Legacy route behavior is preserved only where it does not weaken auth binding."
+    failure_modes:
+      - scenario: Route payload compatibility breaks existing clients.
+        likelihood: medium
+        impact: high
+        mitigation: Add compatibility shims and explicit response tests before removing any legacy fields.
+    tech_stack: ["FastAPI", "Pydantic", "Python 3.11"]
+    test_coverage: "route-auth tests, forbidden-user-id tests, task-list isolation tests"
+
+  - id: TASK-004
+    title: Refactor identity, integrations, and messaging routes
+    description: |
+      Update backend/routes/identity.py, backend/routes/integrations.py, and backend/routes/messaging.py to consume the authenticated principal and reject forged tenant or user ids.
+      This also adds strict webhook identity binding so external callbacks cannot impersonate a tenant.
+      It covers checklist items 3, 4, 5, 29, 30, and 72.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: ["3", "4", "5", "29", "30", "72"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-001"]
+    conflicts_with: []
+    context_files:
+      - path: backend/routes/identity.py
+        description: Identity setup and status endpoints still accept user_id body/query inputs.
+      - path: backend/routes/integrations.py
+        description: Integration connect/list endpoints need principal binding and tenant checks.
+      - path: backend/routes/messaging.py
+        description: Telegram, WhatsApp, and voice webhooks need signature and tenant validation.
+    diagnosis:
+      root_cause: Identity, integration, and messaging endpoints still expose caller-controlled identity inputs and webhook trust assumptions.
+      fix_recommendations: Remove free-form user_id binding, validate callback signatures and timestamps, and derive all tenant access from principal or verified channel identity.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 250
+    focus_area: identity-integrations-webhooks
+    verification:
+      - "Identity and integration endpoints reject forged user_id values."
+      - "Webhook handlers verify signature and timestamp before processing callbacks."
+      - "Cross-tenant messaging or integration actions are blocked by principal checks."
+    acceptance_criteria:
+      - "Identity and integration APIs are bound to authenticated principals only."
+      - "Webhook callbacks are replay-safe and signature-verified."
+      - "User-facing OAuth and integration prompts include tenant context checks before redirect."
+    failure_modes:
+      - scenario: An external callback bypasses validation and mutates another tenant's data.
+        likelihood: medium
+        impact: critical
+        mitigation: Require signature, timestamp, and nonce validation for every webhook and add negative tests for forged payloads.
+    tech_stack: ["FastAPI", "HTTPX", "Python 3.11"]
+    test_coverage: "webhook signature tests, identity binding tests, integration-forgery rejection tests"
+
+  - id: TASK-005
+    title: Add governance schema and immutable decision records
+    description: |
+      Create the governance persistence layer in backend/migrations/20260421_governance.sql, backend/database_supabase.py, and backend/core/governance/models.py.
+      The schema must hold immutable approval decisions, mission records, evidence metadata, policy versions, retention fields, and audit export data.
+      This is the data backbone for checklist items 7, 10, 11, 13, 32, 33, 69, and 70.
+    wave: 1
+    agent: gem-implementer
+    prototype: false
+    covers: ["7", "10", "11", "13", "32", "33", "69", "70"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: backend/database_supabase.py
+        description: Current Supabase models and helper methods.
+      - path: backend/core/confirmation_manager.py
+        description: Legacy approval flow that needs to be superseded by governed approvals.
+      - path: backend/core/verification_system.py
+        description: Existing proof and audit helpers that can inform the new evidence schema.
+    diagnosis:
+      root_cause: The repo does not yet have a dedicated immutable governance schema for approvals, evidence, or mission audit records.
+      fix_recommendations: Add append-only decision tables, versioned policy references, and export-friendly audit fields before building the policy engine.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 280
+    focus_area: governance-data-model
+    verification:
+      - "Migration adds append-only approval and audit tables with policy_version fields."
+      - "Decision records cannot be updated in place once written."
+      - "Supabase helpers round-trip the new governance models without losing tenant scope."
+    acceptance_criteria:
+      - "Mission, approval, evidence, and audit data have dedicated versioned storage."
+      - "Records support export, retention, and compliance reporting without schema hacks."
+      - "Future policy and telemetry work can depend on stable DTOs."
+    failure_modes:
+      - scenario: Migration order or constraints break existing task data.
+        likelihood: medium
+        impact: high
+        mitigation: Use additive columns, backfills, and compatibility checks before enforcing stricter constraints.
+    tech_stack: ["PostgreSQL", "Supabase", "Python 3.11"]
+    test_coverage: "migration smoke tests, immutable-record tests, round-trip serialization tests"
+
+  - id: TASK-006
+    title: Implement approval policy engine and mission state machine
+    description: |
+      Build backend/core/governance/policy_engine.py, backend/core/governance/mission_state_machine.py, and backend/core/governance/approval_service.py.
+      The service must classify risk, determine approver counts by role, lock mission transitions, and persist immutable approval decisions with rejection and re-plan paths.
+      This covers checklist items 6, 8, 9, 17, 18, and 31.
+    wave: 2
+    agent: gem-implementer
+    prototype: false
+    covers: ["6", "8", "9", "17", "18", "31"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-005"]
+    conflicts_with: []
+    context_files:
+      - path: backend/core/confirmation_manager.py
+        description: Legacy confirmation flow that needs to be superseded by governance approvals.
+      - path: backend/core/verification_system.py
+        description: Existing proof and audit helpers that can support immutable decision logging.
+      - path: backend/routes/api.py
+        description: Current mission-style route behavior that will consume the new policy service.
+    diagnosis:
+      root_cause: Approval logic is currently scattered and permissive, with no locked mission state machine or immutable decision store.
+      fix_recommendations: Centralize policy evaluation, enforce valid transitions, and persist every approval or rejection as an immutable record.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 280
+    focus_area: approval-engine
+    verification:
+      - "Approval thresholds vary by risk level and approver role."
+      - "Illegal mission transitions are rejected and audited."
+      - "Rejected missions require a reason and re-plan payload."
+    acceptance_criteria:
+      - "Policy evaluation yields deterministic approval requirements for a given mission and role set."
+      - "Mission state transitions are locked and auditable."
+      - "Approval and rejection decisions are immutable records with policy version metadata."
+    failure_modes:
+      - scenario: The policy engine over-blocks routine work or under-blocks high-risk work.
+        likelihood: medium
+        impact: high
+        mitigation: Add threshold tests, shadow-mode logging, and explicit fallback rules for low-risk steps.
+    tech_stack: ["FastAPI", "Pydantic", "Python 3.11"]
+    test_coverage: "policy-threshold tests, state-transition tests, rejection-and-replan tests"
+
+  - id: TASK-007
+    title: Implement evidence vault, trust scoring, and telemetry
+    description: |
+      Add backend/core/governance/evidence_vault.py, backend/core/governance/trust_metrics.py, and backend/core/telemetry.py.
+      The services must hash artifacts, preserve chain-of-custody metadata, compute trace completeness and policy compliance, and emit structured telemetry for missions and fallback behavior.
+      This covers checklist items 7, 10, 11, 12, 13, 20, 32, 33, 59, 60, and 61.
+    wave: 3
+    agent: gem-implementer
+    prototype: false
+    covers: ["7", "10", "11", "12", "13", "20", "32", "33", "59", "60", "61"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-005", "TASK-006"]
+    conflicts_with: []
+    context_files:
+      - path: backend/core/performance.py
+        description: Existing request tracing and telemetry helpers.
+      - path: backend/core/logging_config.py
+        description: Structured logging and audit logging hooks.
+      - path: backend/core/verification_system.py
+        description: Existing proof-generation helpers that can inform evidence bundles.
+    diagnosis:
+      root_cause: The codebase has tracing and logging helpers but lacks governed evidence custody and mission-level trust scoring.
+      fix_recommendations: Store artifact provenance, compute trust metrics from immutable records, and emit event-shaped telemetry for compliance exports.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 260
+    focus_area: evidence-and-telemetry
+    verification:
+      - "Every exported artifact includes a hash, origin, and custody trail."
+      - "Trust scores are derived from the mission trace, not ad hoc UI counters."
+      - "Telemetry events capture mission success, approval latency, and fallback frequency."
+    acceptance_criteria:
+      - "Evidence bundles are exportable and replayable for pilot/procurement review."
+      - "Trace completeness and policy compliance are computed per mission."
+      - "Telemetry is structured and safe to use in compliance dashboards."
+    failure_modes:
+      - scenario: Evidence export misses a critical artifact or uses stale hashes.
+        likelihood: medium
+        impact: high
+        mitigation: Require bundle integrity checks and cross-validate hashes before export.
+    tech_stack: ["Python 3.11", "Supabase", "Pydantic"]
+    test_coverage: "evidence-bundle tests, trust-score tests, telemetry event tests"
+
+  - id: TASK-008
+    title: Implement execution controls and retry and override metadata
+    description: |
+      Add backend/core/governance/execution_controls.py, backend/core/governance/idempotency.py, and backend/core/governance/override_audit.py.
+      This task records retry and fallback strategy metadata, enforces idempotency for mission-triggering operations, and makes manual override visible only to reviewers and auditors.
+      It covers checklist items 17, 18, 19, and 31.
+    wave: 3
+    agent: gem-implementer
+    prototype: false
+    covers: ["17", "18", "19", "31"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-006", "TASK-007"]
+    conflicts_with: []
+    context_files:
+      - path: backend/core/governance/approval_service.py
+        description: Policy and approval decisions that feed execution control decisions.
+      - path: backend/core/verification_system.py
+        description: Existing audit trail patterns to preserve or replace.
+      - path: backend/core/secure_actions.py
+        description: Existing secure-action audit patterns that can inform override logging.
+    diagnosis:
+      root_cause: Retry, fallback, idempotency, and override behavior are not centralized in a governed execution control layer.
+      fix_recommendations: Store every retry and override as metadata tied to the mission step, then gate execution with idempotency keys and reviewer-only visibility.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 240
+    focus_area: execution-controls
+    verification:
+      - "Each retried or failed step stores fallback metadata and the reason for retry."
+      - "Duplicate mission-triggering requests are rejected or deduplicated by idempotency key."
+      - "Manual overrides require a justification and are hidden from non-reviewer roles."
+    acceptance_criteria:
+      - "High-risk execution steps support multi-approver gating and override audit trails."
+      - "Idempotent mission triggers cannot execute twice from the same key."
+      - "Fallback strategy metadata is persisted for every failed step."
+    failure_modes:
+      - scenario: Duplicate requests or retries cause double execution of a sensitive action.
+        likelihood: medium
+        impact: critical
+        mitigation: Enforce idempotency keys at the entrypoint and validate step-level deduplication in tests.
+    tech_stack: ["Python 3.11", "FastAPI", "Pydantic"]
+    test_coverage: "idempotency tests, retry-metadata tests, override-visibility tests"
+
+  - id: TASK-009
+    title: Implement institutional workflow packs
+    description: |
+      Create backend/core/workflow_packs/accreditation.py, backend/core/workflow_packs/faculty.py, and backend/core/workflow_packs/incident.py.
+      Each pack should expose a manifest, steps, approvals, evidence hooks, and export behavior tailored to the campus accreditation, faculty workload, and IT incident scenarios in the PRD.
+      This covers checklist items 14, 15, 16, and supports the governed execution workflow surfaces.
+    wave: 3
+    agent: gem-implementer
+    prototype: false
+    covers: ["14", "15", "16"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-006", "TASK-008"]
+    conflicts_with: []
+    context_files:
+      - path: backend/routes/api.py
+        description: User-facing mission entrypoint that will surface pack selection.
+      - path: backend/core/verification_system.py
+        description: Proof and audit helpers that can inform pack exports.
+      - path: prd.md
+        description: Domain workflow requirements for accreditation, faculty, and incident flows.
+    diagnosis:
+      root_cause: The product currently has generic task flows but no domain-specific workflow packs with governed evidence lifecycles.
+      fix_recommendations: Package the domain flows as manifests with explicit steps, evidence requirements, and export hooks.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 270
+    focus_area: workflow-packs
+    verification:
+      - "Each pack exposes a manifest with steps, approvals, and evidence requirements."
+      - "Pack-specific exports include trace links and policy metadata."
+      - "The three campus scenarios can be launched without custom routing hacks."
+    acceptance_criteria:
+      - "Accreditation, faculty workload, and incident workflows are first-class governed packs."
+      - "Pack manifests are reusable by both backend execution and the frontend UI."
+      - "Pack outputs preserve evidence and approval context."
+    failure_modes:
+      - scenario: Pack logic diverges from the governance engine and bypasses approval rules.
+        likelihood: medium
+        impact: high
+        mitigation: Build packs only on the shared approval and mission-state APIs, then run pack-level policy tests.
+    tech_stack: ["Python 3.11", "FastAPI", "Pydantic"]
+    test_coverage: "workflow-pack tests, manifest tests, export-hook tests"
+
+  - id: TASK-010
+    title: Design governance UI surfaces
+    description: |
+      Create the UX spec for the approvals queue, mission timeline, evidence explorer, and trust metrics dashboard using the active shell in frontend/src/App.jsx plus the clean variant in frontend/src/AppClean.jsx.
+      The output should define component insertion points, empty states, keyboard behavior, and responsive layout before implementation begins.
+      This task is the design pass for checklist items 43 through 47 and 78 through 80.
+    wave: 4
+    agent: gem-designer
+    prototype: false
+    covers: ["43-47", "78-80"]
+    priority: medium
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-007", "TASK-009"]
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/App.jsx
+        description: Active chat shell that needs governance widgets integrated.
+      - path: frontend/src/AppClean.jsx
+        description: Clean UX variant that already hints at dashboard-style composition.
+      - path: frontend/src/components/TaskPanel.jsx
+        description: Current task sidebar that can host mission status and approvals.
+    diagnosis:
+      root_cause: Governance surfaces are not yet designed as first-class parts of the active app shell.
+      fix_recommendations: Define a single navigation and information hierarchy for approvals, timeline, evidence, and trust metrics before coding the new UI.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 180
+    focus_area: governance-ui-design
+    task_type: walkthrough
+    audience: stakeholders
+    coverage_matrix:
+      - approvals queue
+      - mission timeline
+      - evidence explorer
+      - trust metrics dashboard
+      - empty states
+      - keyboard accessibility
+    verification:
+      - "The design names the exact insertion points in App.jsx and the supporting components."
+      - "Empty states and blocked states are defined for approvals, evidence, and metrics views."
+      - "The layout works on desktop and mobile without relying on a single hardcoded screen size."
+    acceptance_criteria:
+      - "The design covers approvals, timeline, evidence, and trust surfaces in the active shell."
+      - "Accessibility and responsive behavior are specified before implementation starts."
+      - "The design supports a feature-flagged pilot rollout."
+    failure_modes:
+      - scenario: The design drifts from the actual app shell and becomes impossible to implement cleanly.
+        likelihood: medium
+        impact: medium
+        mitigation: Anchor the design to App.jsx and the current task panel rather than inventing a new app frame.
+
+  - id: TASK-011
+    title: Implement governance UI surfaces and trust dashboard
+    description: |
+      Implement the approved governance UX in frontend/src/App.jsx plus new governance components such as frontend/src/components/GovernanceDashboard.jsx and frontend/src/components/EvidenceExplorer.jsx.
+      Surface approval queues, mission timeline states, evidence bundles, trust metrics, and procurement-ready export actions behind a rollout flag so the feature can be created, enabled, rolled out, and cleaned up safely.
+      This covers checklist items 43 through 47, 62 through 64, 75 through 80, and the UI part of item 12.
+    wave: 4
+    agent: gem-implementer
+    prototype: false
+    covers: ["12", "43-47", "62-64", "75-80"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-010", "TASK-007", "TASK-009"]
+    conflicts_with: []
+    context_files:
+      - path: frontend/src/App.jsx
+        description: Active shell where the governance widgets must be mounted.
+      - path: frontend/src/components/TaskPanel.jsx
+        description: Existing task surface that can display approvals and mission state.
+      - path: frontend/src/components/TaskAdaptiveWorkspace.jsx
+        description: Workspace container that already coordinates panels and message streams.
+    diagnosis:
+      root_cause: The active frontend does not yet surface governance, evidence, or trust as first-class product features.
+      fix_recommendations: Add a dedicated dashboard, wire it to the new DTOs, and keep the experience responsive and feature-flagged during rollout.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 300
+    focus_area: governance-ui-implementation
+    verification:
+      - "The active app shows approvals, timeline, evidence, and trust metrics in one governed workspace."
+      - "Empty states and blocked states explain why approval or evidence data is missing."
+      - "Export and risk badges render consistently on desktop and mobile."
+    acceptance_criteria:
+      - "Governance UI widgets are present in the active app shell and tied to real backend DTOs."
+      - "Risk, approval source, and evidence export actions are visible on every relevant step."
+      - "The feature can be toggled through a rollout lifecycle without rewriting the shell."
+    failure_modes:
+      - scenario: The new dashboard slows the app or duplicates existing task surfaces.
+        likelihood: medium
+        impact: medium
+        mitigation: Keep the dashboard componentized, lazy-load heavy views, and reuse the active TaskPanel instead of introducing parallel navigation.
+    tech_stack: ["React 18", "Vite", "Framer Motion", "lucide-react"]
+    test_coverage: "component smoke tests, manual browser checks, feature-flag rollout checks"
+
+  - id: TASK-012
+    title: Harden runtime security defaults and webhook verification
+    description: |
+      Harden backend/config.py, backend/core/security.py, and backend/routes/messaging.py so production starts fail closed when secrets are missing, CSP is tighter, and webhook callbacks are verified with anti-replay checks.
+      This task covers the runtime security portions of checklist items 21 through 30, 56, and 65.
+    wave: 1
+    agent: gem-implementer
+    prototype: false
+    covers: ["21-30", "56", "65"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: backend/config.py
+        description: Environment validation and secret placeholder checks.
+      - path: backend/core/security.py
+        description: Security headers and CSP policy middleware.
+      - path: backend/routes/messaging.py
+        description: Telegram and WhatsApp webhook entrypoints.
+    diagnosis:
+      root_cause: Security defaults still allow permissive browser policy, missing secret fail-fast behavior, and unauthenticated webhook assumptions.
+      fix_recommendations: Remove unsafe browser policy where possible, fail startup when required secrets are absent, and validate webhook signatures plus timestamps.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 240
+    focus_area: runtime-security
+    verification:
+      - "Production startup fails when default secret placeholders or required encryption keys are missing."
+      - "Webhook handlers reject forged or replayed callbacks."
+      - "CSP no longer depends on unsafe-eval for the shipped app shell."
+    acceptance_criteria:
+      - "Runtime security defaults fail closed in non-dev environments."
+      - "Webhook callbacks are verified before any side effects happen."
+      - "The app no longer relies on unsafe secret or browser defaults for production boot."
+    failure_modes:
+      - scenario: Tighter security settings break local development or existing integrations.
+        likelihood: medium
+        impact: medium
+        mitigation: Keep dev-only defaults explicit, add environment-specific tests, and stage webhook changes behind compatibility checks.
+    tech_stack: ["FastAPI", "Python 3.11", "HTTPX"]
+    test_coverage: "security-header tests, startup-failure tests, webhook anti-replay tests"
+
+  - id: TASK-013
+    title: Add CI gates and secret scanning
+    description: |
+      Extend .github/workflows/ci-cd.yml and add .pre-commit-config.yaml plus a small scripts/ci/security.sh helper so security scanning, auth tests, and governance tests are required before merge.
+      This wave adds the repository-level guardrails for checklist items 25 through 28, 35 through 42, 57, and 58.
+    wave: 5
+    agent: gem-devops
+    prototype: false
+    covers: ["27", "28", "35-42", "57", "58"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-001", "TASK-003", "TASK-006", "TASK-007", "TASK-011", "TASK-012"]
+    conflicts_with: []
+    context_files:
+      - path: .github/workflows/ci-cd.yml
+        description: Existing CI/CD pipeline with lint, security, backend, and frontend jobs.
+      - path: requirements.txt
+        description: Python dependency lock-in for security and test tooling.
+      - path: frontend/package.json
+        description: Frontend build and audit entrypoint for governance UI verification.
+    diagnosis:
+      root_cause: CI currently scans some issues but does not yet gate the merge on the governance-critical checks or repo secret hygiene.
+      fix_recommendations: Add explicit failing gates, secret-scanning hooks, and a minimal pre-commit baseline before the feature rollout is allowed to merge.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 220
+    focus_area: ci-security-guardrails
+    environment: development
+    requires_approval: true
+    devops_security_sensitive: true
+    verification:
+      - "CI fails when auth, policy, or governance tests fail."
+      - "Secret scanning runs in both pre-commit and CI contexts."
+      - "The pipeline produces explicit evidence for governance-critical modules."
+    acceptance_criteria:
+      - "Merge gates require the security and auth test suites to pass."
+      - "Secret scanning is automatic before push and in CI."
+      - "Coverage thresholds are enforced for governance-critical modules."
+    failure_modes:
+      - scenario: Security gates create noisy false positives or block all merges.
+        likelihood: medium
+        impact: medium
+        mitigation: Start with targeted rules and explicit allowlists, then tighten after the baseline is stable.
+
+  - id: TASK-014
+    title: Add browser E2E and regression validation
+    description: |
+      Author the browser validation flows and regression coverage in tests/e2e_browser_test.py, tests/e2e_complex_flows.py, and tests/task_scenarios.py.
+      Validate the approvals queue, evidence export, mission timeline, auth denial cases, and governed rollout behavior from the user’s point of view.
+      This covers checklist items 35 through 42 and reinforces the UI and policy work from the earlier waves.
+    wave: 5
+    agent: gem-browser-tester
+    prototype: false
+    covers: ["35-42"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-011", "TASK-012", "TASK-013"]
+    conflicts_with: []
+    context_files:
+      - path: tests/e2e_browser_test.py
+        description: Existing browser test harness.
+      - path: tests/e2e_complex_flows.py
+        description: Multi-step browser flow coverage.
+      - path: tests/task_scenarios.py
+        description: Scenario data for task-driven browser validation.
+    diagnosis:
+      root_cause: End-to-end governance journeys are not yet locked down with evidence-based browser validation.
+      fix_recommendations: Cover the approval queue, evidence export, and reject/replan paths with deterministic browser scenarios and screenshots or DOM assertions.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 260
+    focus_area: browser-e2e-validation
+    validation_matrix:
+      - scenario: Approvals queue happy path
+        steps:
+          - "Open the governance dashboard"
+          - "Approve a queued step with the required role"
+          - "Confirm the mission advances to the next state"
+        expected_result: "Decision appears in the audit trail and the mission state updates"
+      - scenario: Evidence export correctness
+        steps:
+          - "Open a completed mission"
+          - "Export the evidence bundle"
+          - "Inspect the resulting artifact list and hashes"
+        expected_result: "Export contains trace, approvals, and artifact provenance"
+      - scenario: Rejection and re-plan
+        steps:
+          - "Reject a high-risk step with a reason"
+          - "Verify the mission is locked and re-plan is offered"
+        expected_result: "Rejection is immutable and the mission transitions follow policy"
+    flows:
+      - flow_id: approval-queue-journey
+        description: Approval queue user journey
+        setup:
+          - authenticated principal with reviewer role
+          - seeded queued mission step
+        steps:
+          - open governance dashboard
+          - approve step
+          - verify mission timeline updates
+        expected_state:
+          mission_status: advanced
+          audit_record_created: true
+        teardown:
+          - clear seeded mission
+      - flow_id: evidence-export-journey
+        description: Evidence export correctness journey
+        setup:
+          - completed mission with evidence artifacts
+        steps:
+          - open evidence explorer
+          - trigger export
+          - validate bundle contents
+        expected_state:
+          export_available: true
+          bundle_contains_trace: true
+        teardown:
+          - remove exported artifact
+    fixtures:
+      principal_roles:
+        reviewer: ["reviewer"]
+        admin: ["admin"]
+      mission_states:
+        queued: queued
+        approved: approved
+        rejected: rejected
+    test_data:
+      - mission_id: mission-review-001
+        risk_level: high
+        expected_decision: approve
+      - mission_id: mission-review-002
+        risk_level: high
+        expected_decision: reject
+    cleanup: true
+    visual_regression:
+      enabled: true
+      surfaces:
+        - approvals queue
+        - mission timeline
+        - evidence explorer
+        - trust metrics dashboard
+    verification:
+      - "The browser flows cover approval, rejection, and export journeys."
+      - "Auth denial and tenant mismatch cases are visible in the browser suite."
+      - "The validation results can be used as release evidence."
+    acceptance_criteria:
+      - "Browser tests prove the governed journeys work end-to-end."
+      - "Evidence export correctness is validated in a real browser."
+      - "Regression coverage protects the auth and approval surfaces from drift."
+    failure_modes:
+      - scenario: Browser tests become flaky and stop being trusted as release evidence.
+        likelihood: medium
+        impact: medium
+        mitigation: Keep fixtures deterministic, avoid timing-only assertions, and record reusable setup/teardown steps.
+
+  - id: TASK-015
+    title: Simplify legacy orchestration paths and patch scripts
+    description: |
+      Consolidate the canonical orchestration path in backend/core/brain.py and backend/agent/orchestrator.py, then align backend/routes/agent.py with the new governed flow.
+      Use the same cleanup wave to relocate or retire the root patch scripts so the repository no longer advertises multiple competing orchestration entrypoints.
+      This addresses checklist items 48, 49, 50, 66, 67, and 68.
+    wave: 5
+    agent: gem-code-simplifier
+    prototype: false
+    covers: ["48", "49", "50", "66", "67", "68"]
+    priority: medium
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-002", "TASK-003", "TASK-004", "TASK-011"]
+    conflicts_with: []
+    context_files:
+      - path: backend/core/brain.py
+        description: Canonical conversational brain wrapper.
+      - path: backend/agent/orchestrator.py
+        description: Task orchestrator that still exposes a legacy task model.
+      - path: backend/routes/agent.py
+        description: Legacy agent route that should be deprecated or narrowed.
+    diagnosis:
+      root_cause: The repo still exposes multiple overlapping orchestration paths and a large set of temporary patch scripts in the root.
+      fix_recommendations: Pick one canonical orchestration path, keep the others as thin compatibility shims, and relocate or retire the patch utilities under tooling ownership.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 240
+    focus_area: orchestration-consolidation
+    verification:
+      - "Only one canonical governed orchestration path is documented and used by active routes."
+      - "Legacy route behavior is either shimmed or explicitly deprecated."
+      - "Root patch scripts are no longer presented as active implementation entrypoints."
+    acceptance_criteria:
+      - "The active orchestration path is clear, documented, and narrow."
+      - "Duplicate or legacy entrypoints no longer create ambiguity for implementers."
+      - "Temporary scripts are either relocated under tooling ownership or removed from the root implementation surface."
+    failure_modes:
+      - scenario: Simplification removes behavior that still powers an active flow.
+        likelihood: medium
+        impact: high
+        mitigation: Keep thin compatibility shims, run path-by-path regression checks, and avoid deleting code until the new flow is proven.
+
+  - id: TASK-016
+    title: Update documentation, ADRs, and pilot readiness materials
+    description: |
+      Publish the plan, architecture notes, and runbook material in README.md, PRODUCT_IMPLEMENTATION_BLUEPRINT.md, and a new docs/adr/001-governance-auth.md or equivalent ADR file.
+      Document the new governed execution positioning, why-us differentiation, rollout readiness checklist, and operations guidance for secret rotation and incident response.
+      This covers checklist items 51 through 55, 60 through 64, 73, 74, and the documentation remainder of item 48.
+    wave: 6
+    agent: gem-documentation-writer
+    prototype: false
+    covers: ["48", "51-55", "60-64", "73", "74"]
+    priority: medium
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: ["TASK-013", "TASK-014", "TASK-015"]
+    conflicts_with: []
+    context_files:
+      - path: README.md
+        description: Main product positioning and onboarding documentation.
+      - path: PRODUCT_IMPLEMENTATION_BLUEPRINT.md
+        description: Architecture and milestone reference document.
+      - path: docs/plan/20260421-governed-execution/plan.yaml
+        description: The implementation plan that this task will summarize and link from docs.
+    diagnosis:
+      root_cause: The repo’s documentation still positions the product as a generic task runner instead of a governed institutional execution platform.
+      fix_recommendations: Rewrite the top-level narrative around governance, evidence, and operational trust, then add ADRs and a pilot readiness checklist.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 200
+    focus_area: documentation-and-readiness
+    task_type: documentation
+    audience: stakeholders
+    coverage_matrix:
+      - governed execution positioning
+      - why-us differentiation
+      - pilot readiness checklist
+      - secret rotation runbook
+      - incident response runbook
+    verification:
+      - "README and blueprint describe governed execution instead of generic chatbot behavior."
+      - "ADRs capture the security and approval model decisions."
+      - "Pilot readiness and operations guidance is discoverable in one place."
+    acceptance_criteria:
+      - "The documentation matches the new product positioning and implementation structure."
+      - "ADRs explain the security model, approval model, and canonical orchestration path."
+      - "A pilot readiness checklist and operations runbook are published for internal and customer review."
+    failure_modes:
+      - scenario: Documentation lags the code and reintroduces the old generic-AI framing.
+        likelihood: medium
+        impact: medium
+        mitigation: Tie doc updates to the implementation waves and link every important claim back to a concrete file or ADR.
+
+  - id: TASK-017
+    title: Rotate leaked credentials and untrack secret files
+    description: |
+      Rotate and revoke the exposed Firebase credential set, remove backend/firebase-credentials.json and the tracked root .env from the active index, and update the repo hygiene rules so the secrets cannot be reintroduced.
+      This task covers the credential-rotation and tracked-secret-removal portions of checklist items 24, 25, and 26.
+      It should land before CI secret scanning is enforced so the repository starts from a clean secret baseline.
+    wave: 1
+    agent: gem-devops
+    prototype: false
+    covers: ["24", "25", "26"]
+    priority: high
+    status: pending
+    flags:
+      flaky: false
+      retries_used: 0
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: backend/firebase-credentials.json
+        description: Exposed Firebase credential file that must be rotated out of the repo.
+      - path: .env
+        description: Tracked environment file that must be removed from the active index.
+      - path: .gitignore
+        description: Ignore rules that should prevent the secrets from being reintroduced.
+    diagnosis:
+      root_cause: The repository still contains exposed or tracked secret material that can be re-added unless the hygiene baseline is cleaned first.
+      fix_recommendations: Rotate the leaked credentials, untrack the secret files, and add ignore rules or secret-manager loading so the repo stays clean.
+      injected_at: "2026-04-21T00:00:00Z"
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial wave-based decomposition from the checklist and PRD.
+        timestamp: "2026-04-21T00:00:00Z"
+    estimated_effort: medium
+    estimated_files: 3
+    estimated_lines: 180
+    focus_area: secret-hygiene
+    environment: development
+    requires_approval: true
+    devops_security_sensitive: true
+    verification:
+      - "The leaked Firebase credentials are rotated and no longer relied on by the repo."
+      - "Tracked secret files are removed from the active index and protected by ignore rules."
+      - "The repo can boot using secret-manager loading rather than checked-in credentials."
+    acceptance_criteria:
+      - "Secret exposure is removed before CI secret scanning is tightened."
+      - "The root .env and Firebase credential file are no longer treated as source-controlled secrets."
+      - "Secret-loading guidance is updated so future contributors do not reintroduce the exposure."
+    failure_modes:
+      - scenario: Credential rotation breaks a live integration before replacements are ready.
+        likelihood: medium
+        impact: high
+        mitigation: Stage the rotation with replacement secrets in place and verify each dependent integration before revoking the old key.

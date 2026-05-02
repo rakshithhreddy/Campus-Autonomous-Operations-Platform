@@ -206,6 +206,9 @@ class OAuthManager:
         # Firebase store for persistence
         self._firebase_store = None
         
+        # Integration store for Supabase persistence
+        self._integration_store = None
+
     def _get_firebase_store(self):
         """Lazy load Firebase store"""
         if self._firebase_store is None:
@@ -215,6 +218,16 @@ class OAuthManager:
             except ImportError:
                 logger.warning("Firebase not available for OAuth token storage")
         return self._firebase_store
+
+    def _get_integration_store(self):
+        """Lazy load IntegrationStore (Supabase-backed) for persistent token storage."""
+        if self._integration_store is None:
+            try:
+                from .integration_manager.integration_store import integration_store
+                self._integration_store = integration_store
+            except ImportError:
+                logger.warning("IntegrationStore not available")
+        return self._integration_store
     
     def get_config(self, service: OAuthService) -> OAuthConfig:
         """Get OAuth configuration for a service"""
@@ -335,21 +348,35 @@ class OAuthManager:
         config = self.get_config(service)
         
         try:
+            exchange_params = {
+                "client_id": config.client_id,
+                "client_secret": config.client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri or config.redirect_uri,
+                "grant_type": "authorization_code",
+            }
+            
+            # DEBUG LOG
+            print(f"--- DEBUG OAUTH EXCHANGE START for {service.value} ---")
+            print(f"URL: {config.token_url}")
+            print(f"CLIENT_ID: {exchange_params['client_id']}")
+            print(f"REDIRECT_URI: {exchange_params['redirect_uri']}")
+            # Mask secret
+            masked_secret = exchange_params['client_secret'][:8] + "..." if exchange_params['client_secret'] else "None"
+            print(f"CLIENT_SECRET: {masked_secret}")
+            
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     config.token_url,
-                    data={
-                        "client_id": config.client_id,
-                        "client_secret": config.client_secret,
-                        "code": code,
-                        "redirect_uri": redirect_uri or config.redirect_uri,
-                        "grant_type": "authorization_code",
-                    },
+                    data=exchange_params,
                     headers={"Accept": "application/json"},
                 )
                 
+                print(f"RESPONSE STATUS: {response.status_code}")
                 if response.status_code != 200:
-                    logger.error(f"Token exchange failed: {response.text}")
+                    error_detail = response.text
+                    print(f"!!! OAUTH ERROR RESPONSE: {error_detail}")
+                    logger.error(f"Token exchange failed for {service.value}: {error_detail}")
                     return None
                 
                 data = response.json()
@@ -515,40 +542,91 @@ class OAuthManager:
         service: OAuthService,
         token: OAuthToken
     ):
-        """Save token to cache and persistent storage"""
-        # Update cache
+        """Save token to cache, Firebase, AND IntegrationStore (Supabase)."""
+        # Update in-memory cache
         if user_id not in self._token_cache:
             self._token_cache[user_id] = {}
         self._token_cache[user_id][service.value] = token
         
         # Save to Firebase
-        store = self._get_firebase_store()
-        if store and store.available:
-            await store.save_oauth_token(user_id, service.value, token.to_dict())
-    
+        firebase = self._get_firebase_store()
+        if firebase and firebase.available:
+            try:
+                await firebase.save_oauth_token(user_id, service.value, token.to_dict())
+            except Exception as e:
+                logger.warning(f"Firebase save failed for {service.value}: {e}")
+
+        # Save to IntegrationStore (Supabase) — this is the PERSISTENT store
+        istore = self._get_integration_store()
+        if istore:
+            try:
+                istore.connect_integration(
+                    user_id=user_id,
+                    service=service.value,
+                    access_token=token.access_token,
+                    refresh_token=token.refresh_token,
+                    scopes=token.scopes,
+                    expires_at=token.expires_at.isoformat() if token.expires_at else None,
+                )
+                logger.info(f"Persisted {service.value} token for {user_id} to Supabase")
+            except Exception as e:
+                logger.warning(f"IntegrationStore save failed for {service.value}: {e}")
+
     async def _get_stored_token(
         self,
         user_id: str,
         service: OAuthService
     ) -> Optional[OAuthToken]:
-        """Get token from cache or persistent storage"""
-        # Check cache
+        """Get token from cache → Firebase → IntegrationStore (Supabase)."""
+        # 1. Check in-memory cache
         if user_id in self._token_cache:
             if service.value in self._token_cache[user_id]:
                 return self._token_cache[user_id][service.value]
         
-        # Try Firebase
-        store = self._get_firebase_store()
-        if store and store.available:
-            data = await store.get_oauth_token(user_id, service.value)
-            if data:
-                token = OAuthToken.from_dict(data)
-                # Update cache
-                if user_id not in self._token_cache:
-                    self._token_cache[user_id] = {}
-                self._token_cache[user_id][service.value] = token
-                return token
+        # 2. Try Firebase
+        firebase = self._get_firebase_store()
+        if firebase and firebase.available:
+            try:
+                data = await firebase.get_oauth_token(user_id, service.value)
+                if data:
+                    token = OAuthToken.from_dict(data)
+                    if user_id not in self._token_cache:
+                        self._token_cache[user_id] = {}
+                    self._token_cache[user_id][service.value] = token
+                    return token
+            except Exception as e:
+                logger.warning(f"Firebase read failed for {service.value}: {e}")
         
+        # 3. Try IntegrationStore (Supabase) — the persistent fallback
+        istore = self._get_integration_store()
+        if istore:
+            try:
+                record = istore.get_integration(user_id, service.value)
+                if record and record.get("status") == "connected":
+                    tokens = record.get("tokens", {})
+                    if tokens and tokens.get("access_token"):
+                        token = OAuthToken(
+                            access_token=tokens.get("access_token", ""),
+                            refresh_token=tokens.get("refresh_token", ""),
+                            token_type="Bearer",
+                            expires_at=(
+                                datetime.fromisoformat(tokens["expires_at"])
+                                if tokens.get("expires_at") else None
+                            ),
+                            scopes=record.get("scopes", []),
+                            service=service.value,
+                            user_email=tokens.get("user_email", ""),
+                        )
+                        token.user_id = user_id
+                        # Warm the cache
+                        if user_id not in self._token_cache:
+                            self._token_cache[user_id] = {}
+                        self._token_cache[user_id][service.value] = token
+                        logger.info(f"Restored {service.value} token for {user_id} from Supabase")
+                        return token
+            except Exception as e:
+                logger.warning(f"IntegrationStore read failed for {service.value}: {e}")
+
         return None
     
     async def _delete_token(
@@ -556,15 +634,26 @@ class OAuthManager:
         user_id: str,
         service: OAuthService
     ):
-        """Delete token from cache and storage"""
+        """Delete token from cache, Firebase, AND IntegrationStore."""
         # Remove from cache
         if user_id in self._token_cache:
             self._token_cache[user_id].pop(service.value, None)
         
         # Remove from Firebase
-        store = self._get_firebase_store()
-        if store and store.available:
-            await store.delete_oauth_token(user_id, service.value)
+        firebase = self._get_firebase_store()
+        if firebase and firebase.available:
+            try:
+                await firebase.delete_oauth_token(user_id, service.value)
+            except Exception as e:
+                logger.warning(f"Firebase delete failed for {service.value}: {e}")
+
+        # Remove from IntegrationStore (Supabase)
+        istore = self._get_integration_store()
+        if istore:
+            try:
+                istore.revoke_integration(user_id, service.value)
+            except Exception as e:
+                logger.warning(f"IntegrationStore delete failed for {service.value}: {e}")
     
     async def _get_google_user_email(self, access_token: str) -> Optional[str]:
         """Get Google user email from access token"""

@@ -18,7 +18,7 @@ Design principles:
 5. Reuse silently — after first connect, use stored token automatically
 """
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
@@ -26,6 +26,7 @@ import uuid
 import logging
 import os
 import json
+from ..core.auth import get_current_principal, Principal
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class FallbackRouter:
 
 class ConnectRequest(BaseModel):
     """Request to initiate an integration connection"""
-    user_id: str = Field(..., min_length=1, max_length=100)
+    user_id: Optional[str] = Field(None, min_length=1, max_length=100)
     service: str = Field(..., min_length=1, max_length=100)
     scopes: Optional[List[str]] = None
 
@@ -154,7 +155,7 @@ class IntegrationResponse(BaseModel):
 
 @router.get("/")
 async def list_integrations(
-    user_id: str = Query(..., description="User identifier")
+    principal: Principal = Depends(get_current_principal)
 ):
     """
     List all connected and available integrations for a user.
@@ -166,6 +167,7 @@ async def list_integrations(
     """
     store = get_integration_store()
     
+    user_id = principal.user_id
     connected = store.get_user_integrations(user_id)
     available = store.get_available_integrations(user_id)
     
@@ -185,7 +187,11 @@ async def list_integrations(
 
 
 @router.post("/connect")
-async def connect_integration(request: ConnectRequest, http_request: Request):
+async def connect_integration(
+    request: ConnectRequest,
+    http_request: Request,
+    principal: Principal = Depends(get_current_principal),
+):
     """
     Initiate integration connection.
     
@@ -210,7 +216,7 @@ async def connect_integration(request: ConnectRequest, http_request: Request):
         )
     
     # Check if already connected
-    if store.is_connected(request.user_id, request.service):
+    if store.is_connected(principal.user_id, request.service):
         return {
             "status": "already_connected",
             "message": f"{request.service} is already connected. Use it directly.",
@@ -237,7 +243,7 @@ async def connect_integration(request: ConnectRequest, http_request: Request):
                     redirect_uri = f"{base_url}/api/oauth/callback/zoom"
 
                 auth_url, state = manager.get_authorization_url(
-                    user_id=request.user_id,
+                    user_id=principal.user_id,
                     service=oauth_service,
                     extra_scopes=request.scopes,
                     override_redirect_uri=redirect_uri,
@@ -268,7 +274,6 @@ async def connect_integration(request: ConnectRequest, http_request: Request):
 @router.post("/callback")
 async def integration_callback(
     service: str = Query(...),
-    user_id: str = Query(...),
     code: str = Query(None),
     state: str = Query(None),
     error: str = Query(None),
@@ -293,8 +298,12 @@ async def integration_callback(
             token = await manager.exchange_code(state, code)
             
             if token:
+                callback_user_id = getattr(token, "user_id", None)
+                if not callback_user_id:
+                    raise HTTPException(status_code=400, detail="Missing user context in OAuth state")
+
                 store.connect_integration(
-                    user_id=user_id,
+                    user_id=callback_user_id,
                     service=service,
                     access_token=token.access_token if hasattr(token, 'access_token') else str(token),
                     refresh_token=token.refresh_token if hasattr(token, 'refresh_token') else None,
@@ -313,7 +322,12 @@ async def integration_callback(
             raise
         except Exception as e:
             logger.error(f"Integration callback error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            # Redirect back with detailed error
+            error_msg = str(e).replace('\n', ' ')
+            return JSONResponse(
+                status_code=400,
+                content={"status": "failed", "error": f"Token exchange failed: {error_msg}", "service": service}
+            )
     
     raise HTTPException(status_code=400, detail="Missing authorization code")
 
@@ -321,7 +335,7 @@ async def integration_callback(
 @router.delete("/{integration_id}")
 async def revoke_integration(
     integration_id: str,
-    user_id: str = Query(..., description="User identifier")
+    principal: Principal = Depends(get_current_principal)
 ):
     """
     Revoke an integration.
@@ -330,7 +344,7 @@ async def revoke_integration(
     User can reconnect anytime.
     """
     store = get_integration_store()
-    success = store.revoke_integration(user_id, integration_id)
+    success = store.revoke_integration(principal.user_id, integration_id)
     
     if success:
         return {
@@ -348,11 +362,11 @@ async def revoke_integration(
 @router.delete("/service/{service_name}")
 async def revoke_integration_by_service(
     service_name: str,
-    user_id: str = Query(..., description="User identifier")
+    principal: Principal = Depends(get_current_principal)
 ):
     """Revoke integration by service name (convenience endpoint)"""
     store = get_integration_store()
-    success = store.revoke_by_service(user_id, service_name)
+    success = store.revoke_by_service(principal.user_id, service_name)
     
     if success:
         return {"status": "revoked", "service": service_name, "revoked": True}
@@ -363,7 +377,7 @@ async def revoke_integration_by_service(
 @router.get("/status/{service}")
 async def check_integration_status(
     service: str,
-    user_id: str = Query(..., description="User identifier")
+    principal: Principal = Depends(get_current_principal)
 ):
     """
     Check health and status of a specific integration.
@@ -374,7 +388,7 @@ async def check_integration_status(
     - fallback: recommended route if not connected
     """
     store = get_integration_store()
-    health = store.check_health(user_id, service)
+    health = store.check_health(principal.user_id, service)
     
     # Add fallback route info
     health["fallback"] = FallbackRouter.get_fallback_route(
@@ -386,8 +400,8 @@ async def check_integration_status(
 
 @router.get("/check-needs")
 async def check_integration_needs(
-    user_id: str = Query(...),
-    task_type: str = Query(..., description="Type of task (e.g., send_email, schedule_meeting)")
+    task_type: str = Query(..., description="Type of task (e.g., send_email, schedule_meeting)"),
+    principal: Principal = Depends(get_current_principal)
 ):
     """
     Check what integrations are needed for a specific task type.
@@ -417,7 +431,7 @@ async def check_integration_needs(
     any_connected = False
     
     for service in needed_services:
-        is_connected = store.is_connected(user_id, service)
+        is_connected = store.is_connected(principal.user_id, service)
         if is_connected:
             any_connected = True
         

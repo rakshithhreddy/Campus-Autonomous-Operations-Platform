@@ -35,5 +35,6 @@
   "backend/tests/test_api.py::TestInputValidation::test_invalid_json": true,
   "backend/tests/test_api.py::TestResponseTime::test_health_responds_quickly": true,
   "backend/tests/test_api.py::TestResponseTime::test_concurrent_requests": true,
-  "backend/tests/test_core.py::TestChatRequestValidation::test_valid_chat_request": true
+  "backend/tests/test_core.py::TestChatRequestValidation::test_valid_chat_request": true,
+  "backend/tests/test_api.py": true
 }

@@ -7,20 +7,27 @@ from openai import AsyncOpenAI
 import os
 from datetime import datetime
 
+from .openai_compat import (
+    get_openai_compatible_api_key,
+    get_openai_compatible_base_url,
+    get_openai_compatible_model,
+)
+
 class TaskPlanner:
     """Advanced task planning with multi-step workflows"""
     
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
+        self.api_key = get_openai_compatible_api_key()
+        self.base_url = get_openai_compatible_base_url()
+        self.model = get_openai_compatible_model()
         self._client = None
     
     def _get_client(self):
         """Lazy initialization of OpenAI client"""
         if self._client is None:
             if not self.api_key:
-                raise ValueError("OPENAI_API_KEY not set")
-            self._client = AsyncOpenAI(api_key=self.api_key)
+                raise ValueError("KIMI_API_KEY / OPENAI_API_KEY not set")
+            self._client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         return self._client
     
     async def create_plan(self, intent: Dict, context: Dict = None, available_plugins: List[str] = None) -> Dict[str, Any]:

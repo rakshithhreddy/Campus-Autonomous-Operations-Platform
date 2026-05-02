@@ -8,12 +8,19 @@ from openai import AsyncOpenAI
 import os
 from datetime import datetime
 
+from .openai_compat import (
+    get_openai_compatible_api_key,
+    get_openai_compatible_base_url,
+    get_openai_compatible_model,
+)
+
 class AgentManager:
     """Main agent manager with reasoning capabilities"""
     
     def __init__(self):
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
+        self.api_key = get_openai_compatible_api_key()
+        self.base_url = get_openai_compatible_base_url()
+        self.model = get_openai_compatible_model()
         self.max_iterations = 10
         self.memory_store = {}
         self._client = None
@@ -22,8 +29,8 @@ class AgentManager:
         """Lazy initialization of OpenAI client"""
         if self._client is None:
             if not self.api_key:
-                raise ValueError("OPENAI_API_KEY not set")
-            self._client = AsyncOpenAI(api_key=self.api_key)
+                raise ValueError("KIMI_API_KEY / OPENAI_API_KEY not set")
+            self._client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         return self._client
         
     async def process_intent(self, user_input: str, user_id: str = "default", context: Dict = None) -> Dict[str, Any]:

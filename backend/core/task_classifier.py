@@ -173,9 +173,14 @@ class TaskClassifier:
             ],
             
             TaskCategory.CALENDAR: [
-                r"\b(calendar|event|appointment)\b",
+                r"\b(calendar|event|appointment|events)\b",
+                r"\b(upcoming|scheduled)\b.*\b(event|events|appointment|meeting|calendar)\b",
+                r"\bdo i have\b.*\b(any\b.*)?(\b(upcoming|scheduled|pending)\b.*?)?(event|events|appointment|meeting)\b",
+                r"\b(what|which|list|show|get|check)\b.*\b(upcoming|scheduled|pending)?\b.*\b(event|events|appointment|meeting|calendar)\b",
                 r"\bschedule\b(?!.*meeting)",  # Schedule without meeting
                 r"\badd\b.*\b(event|appointment)\b",
+                r"\bbusy\b.*\b(time|schedule|calendar)\b",
+                r"\bfree\b.*\b(time|slot|calendar)\b",
             ],
             
             TaskCategory.CREATIVE: [

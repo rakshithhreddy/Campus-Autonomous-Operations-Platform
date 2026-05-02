@@ -37,18 +37,28 @@ import httpx
 from dotenv import load_dotenv
 
 # Explicitly load .env from project root
-_project_root = Path(__file__).parent.parent.parent
-_env_path = _project_root / ".env"
-load_dotenv(dotenv_path=_env_path)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=_env_path, override=True)
+
+from .openai_compat import (
+    build_openai_compatible_url,
+    get_openai_compatible_api_key,
+    get_openai_compatible_model,
+)
 
 from .sandbox import SandboxExecutor, RiskClassifier, ExecutionResult
 from .strategy_store import StrategyStore
 from .tool_registry import get_tool_registry
 from .task_classifier import get_task_classifier, TaskClassification, TaskRiskLevel
+from .governance_bridge import get_governance_bridge
 
 logger = logging.getLogger(__name__)
 
-# OpenAI is PRIMARY provider for agentic tasks (best instruction following)
+# Kimi Configuration
+KIMI_URL = "https://api.moonshot.ai/v1/chat/completions"
+KIMI_MODEL = os.getenv("KIMI_MODEL", "moonshot-v1-8k")
+
+# OpenAI Configuration
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -121,17 +131,20 @@ class AdaptiveAgent:
         self.classifier = RiskClassifier()
         self.task_classifier = get_task_classifier()  # Layer 3: Task Classification
         self.strategies = StrategyStore()
-        # OpenAI is PRIMARY (best for agentic tasks)
-        self.openai_key = os.getenv("OPENAI_API_KEY", "")
-        # OpenRouter is SECONDARY (200+ models)
-        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
-        # Groq is FALLBACK
-        self.groq_key = os.getenv("GROQ_API_KEY", "")
         
-        # Priority: OpenAI > OpenRouter > Ollama
+        # Load API Keys
+        self.kimi_key = os.getenv("KIMI_API_KEY", "")
+        self.openai_key = os.getenv("OPENAI_API_KEY", "")
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+        self.groq_key = os.getenv("GROQ_API_KEY", "")
+        self.gemini_key = os.getenv("GEMINI_API_KEY", "")
+        
+        # Priority/Availability flags
+        self.use_kimi = bool(self.kimi_key)
         self.use_openai = bool(self.openai_key)
-        self.use_openrouter = bool(self.openrouter_key) and not self.use_openai
-        logger.info(f"[AdaptiveAgent] Initialized - use_openai: {self.use_openai}, use_openrouter: {self.use_openrouter}")
+        self.use_openrouter = bool(self.openrouter_key)
+        
+        logger.info(f"[AdaptiveAgent] Initialized - Kimi: {self.use_kimi}, OpenAI: {self.use_openai}, Groq: {bool(self.groq_key)}")
 
     def _extract_existing_code_from_history(self, history: List[Dict[str, str]]) -> Optional[str]:
         """Extract existing code artifacts from conversation history for iterative modifications"""
@@ -423,7 +436,7 @@ WHEN CHALLENGED OR CORRECTED:
             except Exception:
                 yield AgentEvent(
                     type="error",
-                    content="No AI API key configured. Set OPENAI_API_KEY, OPENROUTER_API_KEY, or run Ollama locally.",
+                    content="No AI API key configured. Set KIMI_API_KEY (recommended) or OPENAI_API_KEY / OPENROUTER_API_KEY, or run Ollama locally.",
                 )
                 return
 
@@ -445,6 +458,16 @@ WHEN CHALLENGED OR CORRECTED:
         
         suggested_tools = getattr(task_classification, "suggested_tools", None) or []
 
+        context: Dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "task_classification": {
+                "category": task_classification.category.value,
+                "risk_level": task_classification.risk_level.value,
+                "requires_confirmation": task_classification.requires_confirmation,
+            },
+        }  # Accumulated results from steps
+
         # Emit classification event for frontend awareness
         yield AgentEvent(
             type="task_classified",
@@ -460,6 +483,20 @@ WHEN CHALLENGED OR CORRECTED:
                 "routing_hint": getattr(task_classification, "routing_hint", None),
             }
         )
+
+        # =========================================================================
+        # 🛡️ GOVERNANCE BRIDGE: Create Mission
+        # =========================================================================
+        bridge = get_governance_bridge()
+        mission_id = bridge.start_mission_from_agent(
+            user_id=user_id,
+            tenant_id=context.get("tenant_id") or "dev-tenant",
+            title=user_message[:50] + "...",
+            message=user_message,
+            classification=task_classification
+        )
+        context["mission_id"] = mission_id
+        # =========================================================================
 
         # Check for cached strategy
         strategy_hint = self.strategies.get_strategy_hint(user_message)
@@ -485,15 +522,6 @@ Use this classification to guide your approach.
         messages.append({"role": "user", "content": user_message})
 
         scratchpad: List[Dict[str, str]] = []
-        context: Dict[str, Any] = {
-            'user_id': user_id, 
-            'session_id': session_id,
-            'task_classification': {
-                'category': task_classification.category.value,
-                'risk_level': task_classification.risk_level.value,
-                'requires_confirmation': task_classification.requires_confirmation
-            }
-        }  # Accumulated results from steps
         steps_executed: List[Dict[str, Any]] = []  # For strategy caching
 
         for step in range(self.max_steps):
@@ -543,6 +571,10 @@ Use this classification to guide your approach.
             # --- ANSWER ---
             if answer:
                 yield AgentEvent(type="answer", content=answer)
+                # 🛡️ GOVERNANCE BRIDGE: Complete Mission
+                if context.get("mission_id"):
+                    bridge.complete_mission(context["mission_id"], answer)
+                
                 # Cache successful strategy if we executed multiple steps
                 if len(steps_executed) >= 2:
                     self._cache_strategy(user_message, steps_executed)
@@ -599,6 +631,9 @@ Use this classification to guide your approach.
                     # Zoom requests are handled inside the primitive (prompt to connect or offer Jitsi fallback).
                     if "meet" in platform_l or "google" in platform_l:
                         required_integration = "google_calendar"
+                elif primitive_name == "list_events":
+                    # Check if calendar is connected for listing events
+                    required_integration = "google_calendar"
                 # send_email: handled inside primitive (OAuth if available, SMTP fallback otherwise)
 
                 # Only hard-gate when the integration store is actually usable (Supabase-backed).
@@ -903,98 +938,221 @@ Use this classification to guide your approach.
         except Exception:
             yield AgentEvent(type="answer", content=result.output)
 
-    async def _call_llm(self, messages: List[Dict[str, str]], retry: bool = True) -> str:
-        """Call LLM API - OpenAI primary, OpenRouter secondary, Ollama fallback"""
-        logger.info(f"[_call_llm] use_openai={self.use_openai}, use_openrouter={self.use_openrouter}")
+    async def _call_llm(self, messages: List[Dict[str, str]], retry: int = 3) -> str:
+        """Call LLM API with cascading fallback: Kimi → OpenAI → Groq → Gemini → OpenRouter → Ollama."""
+        errors = []
+        
+        # 1. Try Kimi (Moonshot)
+        if self.use_kimi:
+            try:
+                logger.info(f"[_call_llm] Trying Kimi (key={self.kimi_key[:8]}...)")
+                return await self._call_kimi(messages, max_retries=retry)
+            except Exception as e:
+                error_str = str(e)
+                error_msg = f"Kimi: {error_str[:200]}"
+                errors.append(error_msg)
+                logger.warning(f"[_call_llm] {error_msg}")
+        
+        # 2. Try OpenAI
         if self.use_openai:
-            return await self._call_openai(messages, retry)
-        elif self.use_openrouter:
-            return await self._call_openrouter(messages, retry)
+            try:
+                logger.info(f"[_call_llm] Trying OpenAI (key={self.openai_key[:8]}...)")
+                return await self._call_openai(messages, max_retries=retry)
+            except Exception as e:
+                error_str = str(e)
+                error_msg = f"OpenAI: {error_str[:200]}"
+                errors.append(error_msg)
+                logger.warning(f"[_call_llm] {error_msg}")
+        
+        # 3. Try Groq
+        if self.groq_key:
+            try:
+                logger.info("[_call_llm] Trying Groq fallback...")
+                return await self._call_groq(messages, max_retries=retry)
+            except Exception as e:
+                error_msg = f"Groq: {str(e)[:100]}"
+                errors.append(error_msg)
+                logger.warning(f"[_call_llm] {error_msg}")
+        
+        # 3. Try Gemini (free, reliable - uses GEMINI_API_KEY)
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if gemini_key:
+            try:
+                logger.info("[_call_llm] Trying Gemini fallback...")
+                return await self._call_gemini(messages)
+            except Exception as e:
+                error_msg = f"Gemini: {str(e)[:100]}"
+                errors.append(error_msg)
+                logger.warning(f"[_call_llm] {error_msg}")
         else:
+            logger.debug("[_call_llm] GEMINI_API_KEY not set, skipping")
+        
+        # 4. Try OpenRouter
+        if self.use_openrouter and self.openrouter_key:
+            try:
+                logger.info("[_call_llm] Trying OpenRouter fallback...")
+                return await self._call_openrouter(messages, max_retries=retry)
+            except Exception as e:
+                error_msg = f"OpenRouter: {str(e)[:100]}"
+                errors.append(error_msg)
+                logger.warning(f"[_call_llm] {error_msg}")
+        
+        # 5. Last resort: Ollama (only if running locally)
+        try:
+            logger.info(f"[_call_llm] Trying Ollama local fallback ({OLLAMA_URL})...")
             return await self._call_ollama(messages)
+        except Exception as e:
+            error_msg = f"Ollama: {str(e)[:100]}"
+            errors.append(error_msg)
+            logger.error(f"[_call_llm] ALL PROVIDERS FAILED: {'; '.join(errors)}")
+            raise Exception(f"All AI providers failed: {'; '.join(errors)}")
     
-    async def _call_openai(self, messages: List[Dict[str, str]], retry: bool = True) -> str:
-        """Call OpenAI API directly (best for agentic tasks)"""
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                OPENAI_URL,
-                headers={
-                    "Authorization": f"Bearer {self.openai_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": OPENAI_MODEL,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 4096,
-                },
-            )
+    async def _call_kimi(self, messages: List[Dict[str, str]], max_retries: int = 3) -> str:
+        """Call Kimi (Moonshot) API with exponential backoff"""
+        import asyncio
+        logger.info(f"[_call_kimi] URL={KIMI_URL} MODEL={KIMI_MODEL} KEY={self.kimi_key[:8]}...")
+        
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(
+                        KIMI_URL,
+                        headers={
+                            "Authorization": f"Bearer {self.kimi_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": KIMI_MODEL,
+                            "messages": messages,
+                            "temperature": 0.3,
+                            "max_tokens": 4096,
+                        },
+                    )
 
-            if response.status_code == 429 and retry:
-                import asyncio
-                logger.warning("OpenAI rate limit hit, retrying in 2s...")
-                await asyncio.sleep(2)
-                return await self._call_openai(messages, retry=False)
+                    if response.status_code == 429:
+                        error_body = response.text
+                        if "engine_overloaded" in error_body or "overloaded" in error_body.lower():
+                            raise Exception(f"Kimi error 429: {error_body[:300]}")
+                        if attempt < max_retries - 1:
+                            wait_time = 2 ** attempt
+                            logger.warning(f"Kimi rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception(f"Kimi rate limited after {max_retries} attempts")
 
-            if response.status_code != 200:
-                error_text = response.text[:500]
-                logger.error(f"OpenAI error {response.status_code}: {error_text}")
-                # Fallback to OpenRouter, then Ollama
-                if self.openrouter_key:
-                    logger.warning(f"OpenAI failed ({response.status_code}), trying OpenRouter...")
-                    try:
-                        return await self._call_openrouter(messages, retry)
-                    except Exception as e:
-                        logger.warning(f"OpenRouter also failed: {e}, trying Ollama...")
-                        return await self._call_ollama(messages)
-                logger.warning(f"OpenAI failed ({response.status_code}), trying Ollama...")
-                return await self._call_ollama(messages)
+                    if response.status_code != 200:
+                        error_text = response.text[:500]
+                        raise Exception(f"Kimi API error {response.status_code}: {error_text}")
 
-            data = response.json()
-            if "choices" not in data or not data["choices"]:
-                raise Exception("OpenAI API returned no choices")
+                    data = response.json()
+                    if "choices" not in data or not data["choices"]:
+                        raise Exception("Kimi API returned no choices")
 
-            return data["choices"][0]["message"]["content"]
+                    return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                logger.debug(f"[_call_kimi] Attempt {attempt + 1} failed: {str(e)[:100]}")
+                continue
+
+    async def _call_openai(self, messages: List[Dict[str, str]], max_retries: int = 3) -> str:
+        """Call OpenAI API with exponential backoff"""
+        import asyncio
+        logger.info(f"[_call_openai] URL={OPENAI_URL} MODEL={OPENAI_MODEL} KEY={self.openai_key[:8]}...")
+        
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(
+                        OPENAI_URL,
+                        headers={
+                            "Authorization": f"Bearer {self.openai_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": OPENAI_MODEL,
+                            "messages": messages,
+                            "temperature": 0.3,
+                            "max_tokens": 4096,
+                        },
+                    )
+
+                    if response.status_code == 429:
+                        error_body = response.text
+                        if attempt < max_retries - 1:
+                            wait_time = 2 ** attempt
+                            logger.warning(f"OpenAI rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception(f"OpenAI rate limited after {max_retries} attempts")
+
+                    if response.status_code != 200:
+                        error_text = response.text[:500]
+                        raise Exception(f"OpenAI API error {response.status_code}: {error_text}")
+
+                    data = response.json()
+                    if "choices" not in data or not data["choices"]:
+                        raise Exception("OpenAI API returned no choices")
+
+                    return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                logger.debug(f"[_call_openai] Attempt {attempt + 1} failed: {str(e)[:100]}")
+                continue
     
-    async def _call_openrouter(self, messages: List[Dict[str, str]], retry: bool = True) -> str:
-        """Call OpenRouter API with retry on rate limit"""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                OPENROUTER_URL,
-                headers={
-                    "Authorization": f"Bearer {self.openrouter_key}",
-                    "HTTP-Referer": os.getenv("APP_URL", "http://localhost:8000"),
-                    "X-Title": "Super Manager AI",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": OPENROUTER_MODEL,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 4096,
-                    "top_p": 0.9,
-                },
-            )
+    async def _call_openrouter(self, messages: List[Dict[str, str]], max_retries: int = 3) -> str:
+        """Call OpenRouter API with exponential backoff retry on rate limit"""
+        import asyncio
+        
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        OPENROUTER_URL,
+                        headers={
+                            "Authorization": f"Bearer {self.openrouter_key}",
+                            "HTTP-Referer": os.getenv("APP_URL", "http://localhost:8000"),
+                            "X-Title": "Super Manager AI",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": OPENROUTER_MODEL,
+                            "messages": messages,
+                            "temperature": 0.3,
+                            "max_tokens": 4096,
+                            "top_p": 0.9,
+                        },
+                    )
 
-            if response.status_code == 429 and retry:
-                import asyncio
-                logger.warning("OpenRouter rate limit hit, retrying in 2s...")
-                await asyncio.sleep(2)
-                return await self._call_openrouter(messages, retry=False)
+                    if response.status_code == 429:
+                        if attempt < max_retries - 1:
+                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                            logger.warning(f"OpenRouter rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception(f"Rate limited after {max_retries} attempts")
 
-            if response.status_code != 200:
-                error_text = response.text[:500]
-                logger.error(f"OpenRouter error {response.status_code}: {error_text}")
-                # Try Groq as fallback, then Ollama
-                if self.groq_key:
-                    logger.warning(f"OpenRouter failed ({response.status_code}), trying Groq...")
-                    try:
-                        return await self._call_groq(messages, retry)
-                    except Exception as e:
-                        logger.warning(f"Groq also failed: {e}, trying Ollama...")
-                        return await self._call_ollama(messages)
-                # No Groq key - try Ollama directly
-                logger.warning(f"OpenRouter failed ({response.status_code}), trying Ollama...")
+                    if response.status_code != 200:
+                        error_text = response.text[:500]
+                        logger.error(f"OpenRouter error {response.status_code}: {error_text}")
+                        raise Exception(f"OpenRouter API error {response.status_code}: {error_text}")
+
+                    data = response.json()
+                    if "error" in data:
+                        raise Exception(f"OpenRouter API error: {data['error']}")
+                    if "choices" not in data or not data["choices"]:
+                        raise Exception("OpenRouter API returned no choices")
+
+                    return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                logger.debug(f"[_call_openrouter] Attempt {attempt + 1} failed: {str(e)[:100]}")
+                continue
                 return await self._call_ollama(messages)
 
             data = response.json()
@@ -1012,6 +1170,40 @@ Use this classification to guide your approach.
                 return await self._call_ollama(messages)
             if "choices" not in data or not data["choices"]:
                 raise Exception("OpenRouter API returned no choices")
+
+            return data["choices"][0]["message"]["content"]
+
+    async def _call_gemini(self, messages: List[Dict[str, str]]) -> str:
+        """Call Google Gemini API via OpenAI-compatible endpoint (free tier: 15 req/min)."""
+        gemini_key = os.getenv("GEMINI_API_KEY", "")
+        if not gemini_key:
+            raise Exception("GEMINI_API_KEY not configured")
+
+        gemini_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                gemini_url,
+                headers={
+                    "Authorization": f"Bearer {gemini_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": gemini_model,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 4096,
+                },
+            )
+
+            if response.status_code != 200:
+                error_text = response.text[:300]
+                raise Exception(f"Gemini API error {response.status_code}: {error_text}")
+
+            data = response.json()
+            if "choices" not in data or not data["choices"]:
+                raise Exception("Gemini API returned no choices")
 
             return data["choices"][0]["message"]["content"]
 
@@ -1037,41 +1229,53 @@ Use this classification to guide your approach.
 
             return data["message"]["content"]
 
-    async def _call_groq(self, messages: List[Dict[str, str]], retry: bool = True) -> str:
-        """Call Groq API with retry on 429 rate limit (fallback provider)"""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                GROQ_URL,
-                headers={
-                    "Authorization": f"Bearer {self.groq_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 4096,
-                    "top_p": 0.9,
-                },
-            )
+    async def _call_groq(self, messages: List[Dict[str, str]], max_retries: int = 3) -> str:
+        """Call Groq API with exponential backoff retry on 429 rate limit"""
+        import asyncio
+        
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        GROQ_URL,
+                        headers={
+                            "Authorization": f"Bearer {self.groq_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "model": GROQ_MODEL,
+                            "messages": messages,
+                            "temperature": 0.3,
+                            "max_tokens": 4096,
+                            "top_p": 0.9,
+                        },
+                    )
 
-            if response.status_code == 429 and retry:
-                import asyncio
-                logger.warning("Groq rate limit hit, retrying in 2s...")
-                await asyncio.sleep(2)
-                return await self._call_groq(messages, retry=False)
+                    if response.status_code == 429:
+                        if attempt < max_retries - 1:
+                            wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                            logger.warning(f"Groq rate limit hit (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        else:
+                            raise Exception(f"Rate limited after {max_retries} attempts")
 
-            if response.status_code != 200:
-                error_text = response.text[:200]
-                raise Exception(f"Groq API error {response.status_code}: {error_text}")
+                    if response.status_code != 200:
+                        error_text = response.text[:200]
+                        raise Exception(f"Groq API error {response.status_code}: {error_text}")
 
-            data = response.json()
-            if "error" in data:
-                raise Exception(f"Groq API error: {data['error'].get('message', str(data['error']))}")
-            if "choices" not in data or not data["choices"]:
-                raise Exception("Groq API returned no choices")
+                    data = response.json()
+                    if "error" in data:
+                        raise Exception(f"Groq API error: {data['error'].get('message', str(data['error']))}")
+                    if "choices" not in data or not data["choices"]:
+                        raise Exception("Groq API returned no choices")
 
-            return data["choices"][0]["message"]["content"]
+                    return data["choices"][0]["message"]["content"]
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                logger.debug(f"[_call_groq] Attempt {attempt + 1} failed: {str(e)[:100]}")
+                continue
 
     def _extract_tag(self, text: str, tag: str) -> Optional[str]:
         """Extract content between XML tags - also handles unclosed tags"""

@@ -19,10 +19,21 @@ from contextlib import asynccontextmanager
 import os
 import sys
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment early
-load_dotenv()
+try:
+    from .config import validate_settings
+except ImportError:  # pragma: no cover
+    from backend.config import validate_settings
+
+BACKEND_ENV_FILE = Path(__file__).resolve().parent / ".env"
+
+# Load environment early from the backend config file, not the repo root.
+load_dotenv(dotenv_path=BACKEND_ENV_FILE, override=True)
+
+# Fail fast for unsafe production settings.
+validate_settings()
 
 # If this module is imported as a top-level module (e.g. `cd backend && uvicorn main:app`),
 # relative imports (from .core/ .routes) will fail in submodules. Ensure the repository root
@@ -67,6 +78,7 @@ try:
         RequestTracer
     )
     from .core.security import setup_security_middleware
+    from .core.auth_middleware import AuthMiddleware
 except ImportError:  # pragma: no cover
     from backend.core.performance import (
         ai_circuit_breaker, db_circuit_breaker, email_circuit_breaker,
@@ -74,6 +86,7 @@ except ImportError:  # pragma: no cover
         RequestTracer
     )
     from backend.core.security import setup_security_middleware
+    from backend.core.auth_middleware import AuthMiddleware
 
 # Force UTF-8 encoding for stdout/stderr on Windows
 if sys.platform.startswith('win'):
@@ -92,9 +105,9 @@ logger.info("[DB] Using Supabase PostgreSQL")
 
 # Import routes with error handling to prevent one failed import from crashing the app
 try:
-    from .routes import api, streaming
+    from .routes import api, streaming, users
 except ImportError:  # pragma: no cover
-    from backend.routes import api, streaming
+    from backend.routes import api, streaming, users
 
 # Legacy routes - loaded conditionally
 try:
@@ -131,6 +144,54 @@ except Exception as e:
     TASKS_V2_AVAILABLE = False
     tasks_v2 = None
     logger.error(f"[IMPORT] ❌ tasks_v2 failed: {e}")
+
+try:
+    try:
+        from .routes import governance
+    except ImportError:  # pragma: no cover
+        from backend.routes import governance
+    GOVERNANCE_AVAILABLE = True
+    logger.info("[IMPORT] ✅ governance loaded")
+except Exception as e:
+    GOVERNANCE_AVAILABLE = False
+    governance = None
+    logger.error(f"[IMPORT] ❌ governance failed: {e}")
+
+try:
+    try:
+        from .routes import evidence
+    except ImportError:  # pragma: no cover
+        from backend.routes import evidence
+    EVIDENCE_AVAILABLE = True
+    logger.info("[IMPORT] ✅ evidence loaded")
+except Exception as e:
+    EVIDENCE_AVAILABLE = False
+    evidence = None
+    logger.error(f"[IMPORT] ❌ evidence failed: {e}")
+
+try:
+    try:
+        from .routes import policies
+    except ImportError:  # pragma: no cover
+        from backend.routes import policies
+    POLICIES_AVAILABLE = True
+    logger.info("[IMPORT] ✅ policies loaded")
+except Exception as e:
+    POLICIES_AVAILABLE = False
+    policies = None
+    logger.error(f"[IMPORT] ❌ policies failed: {e}")
+
+try:
+    try:
+        from .routes import analytics
+    except ImportError:  # pragma: no cover
+        from backend.routes import analytics
+    ANALYTICS_AVAILABLE = True
+    logger.info("[IMPORT] ✅ analytics loaded")
+except Exception as e:
+    ANALYTICS_AVAILABLE = False
+    analytics = None
+    logger.error(f"[IMPORT] ❌ analytics failed: {e}")
 
 try:
     try:
@@ -179,6 +240,34 @@ except Exception as e:
     INTEGRATIONS_AVAILABLE = False
     integrations = None
     logger.error(f"[IMPORT] ❌ integrations failed: {e}")
+
+# Faculty email management and assistance
+try:
+    try:
+        from .routes import faculty
+    except ImportError:  # pragma: no cover
+        from backend.routes import faculty
+    FACULTY_AVAILABLE = True
+    logger.info("[IMPORT] ✅ faculty loaded")
+except Exception as e:
+    FACULTY_AVAILABLE = False
+    faculty = None
+    logger.error(f"[IMPORT] ❌ faculty failed: {e}")
+
+# Follow-up Pipeline System - Automated workflow orchestration
+try:
+    try:
+        from .routes import workflows
+    except ImportError:  # pragma: no cover
+        from backend.routes import workflows
+    WORKFLOWS_AVAILABLE = True
+    logger.info("[IMPORT] ✅ workflows loaded")
+except Exception as e:
+    WORKFLOWS_AVAILABLE = False
+    workflows = None
+    logger.error(f"[IMPORT] ❌ workflows failed: {e}")
+
+# Messaging webhooks (Telegram, WhatsApp, Voice)
 
 # Messaging webhooks (Telegram, WhatsApp, Voice)
 try:
@@ -239,9 +328,12 @@ async def lifespan(app: FastAPI):
     
     # Initialize database
     try:
-        await init_db()
-        health_monitor.update_health("database", True)
-        logger.info("[DB] ✅ Database initialized")
+        db_ready = await init_db()
+        health_monitor.update_health("database", bool(db_ready))
+        if db_ready:
+            logger.info("[DB] ✅ Database initialized")
+        else:
+            logger.info("[DB] Running in memory-only mode")
     except Exception as e:
         health_monitor.update_health("database", False, str(e))
         logger.warning(f"[DB] ⚠️ Database initialization warning: {e}")
@@ -329,6 +421,16 @@ app = FastAPI(
 # Setup security middleware (headers, rate limiting, logging)
 setup_security_middleware(app)
 
+# Auth middleware: enforces JWT on all non-public paths (Item 1)
+app.add_middleware(AuthMiddleware)
+
+# Register standardized error handlers (Item 68)
+try:
+    from .core.error_response import register_exception_handlers
+except ImportError:
+    from backend.core.error_response import register_exception_handlers
+register_exception_handlers(app)
+
 # Performance tracking middleware
 @app.middleware("http")
 async def performance_tracking_middleware(request: Request, call_next):
@@ -376,7 +478,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     # Allow preview deploys + any local Vite port during development
-    allow_origin_regex=r"(https://(.*\.vercel\.app|.*\.pages\.dev)|http://localhost:\d+)",
+    allow_origin_regex=r"(https://(.*\.vercel\.app|.*\.pages\.dev)|https?://(localhost|127\.0\.0\.1)(:\d+)?)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -386,6 +488,7 @@ app.add_middleware(
 # /api/chat is THE MAIN ENDPOINT - clean, simple flow
 app.include_router(api.router)  # MAIN: /api/chat - brain.py with engine integration
 app.include_router(streaming.router)  # /api/stream/* - streaming version
+app.include_router(users.router)  # /api/users/* - user profile and preferences
 
 # Conditionally include new routers
 if AGENT_V2_AVAILABLE and agent_v2:
@@ -395,6 +498,22 @@ if AGENT_V2_AVAILABLE and agent_v2:
 if TASKS_V2_AVAILABLE and tasks_v2:
     app.include_router(tasks_v2.router)  # /api/v2/tasks/* - Task Orchestration
     logger.info("[ROUTER] tasks_v2 router added")
+
+if GOVERNANCE_AVAILABLE and governance:
+    app.include_router(governance.router)  # /api/governance/* - approvals, missions, trust
+    logger.info("[ROUTER] governance router added")
+
+if EVIDENCE_AVAILABLE and evidence:
+    app.include_router(evidence.router)  # /api/evidence/* - evidence vault
+    logger.info("[ROUTER] evidence router added")
+
+if POLICIES_AVAILABLE and policies:
+    app.include_router(policies.router)  # /api/policies/* - policy studio
+    logger.info("[ROUTER] policies router added")
+
+if ANALYTICS_AVAILABLE and analytics:
+    app.include_router(analytics.router)  # /api/analytics/* - trust analytics
+    logger.info("[ROUTER] analytics router added")
 
 if IDENTITY_AVAILABLE and identity:
     app.include_router(identity.router)  # /api/identity/* - AI Identity Management
@@ -411,6 +530,14 @@ if AUTOMATION_AVAILABLE and automation:
 if INTEGRATIONS_AVAILABLE and integrations:
     app.include_router(integrations.router)  # /api/integrations/* - Integration Manager
     logger.info("[ROUTER] integrations router added")
+if FACULTY_AVAILABLE and faculty:
+    app.include_router(faculty.router)  # /api/faculty/* - Faculty Email Assistant
+    logger.info("[ROUTER] faculty router added")
+
+if WORKFLOWS_AVAILABLE and workflows:
+    app.include_router(workflows.router)  # /api/workflows/* - Follow-up Pipeline System
+    logger.info("[ROUTER] workflows router added")
+
 
 if MESSAGING_AVAILABLE and messaging:
     app.include_router(messaging.router)  # /webhook/* - Telegram, WhatsApp, Voice
@@ -575,7 +702,7 @@ async def system_status():
     firebase_configured = bool(os.getenv("FIREBASE_PROJECT_ID") or os.getenv("FIREBASE_CREDENTIALS_PATH"))
     
     # Check AI providers
-    ai_configured = bool(os.getenv("OPENAI_API_KEY") or os.getenv("GROQ_API_KEY"))
+    ai_configured = bool(os.getenv("KIMI_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("GROQ_API_KEY"))
     
     # Get AI provider status
     ai_providers = ai_router.get_available_providers() if ai_router else []
@@ -586,7 +713,7 @@ async def system_status():
         setup_requirements.append({
             "item": "AI Provider",
             "status": "missing",
-            "action": "Add OPENAI_API_KEY or GROQ_API_KEY to .env"
+            "action": "Add KIMI_API_KEY (recommended) or OPENAI_API_KEY or GROQ_API_KEY to .env"
         })
     if not gmail_configured:
         setup_requirements.append({
@@ -598,7 +725,7 @@ async def system_status():
         setup_requirements.append({
             "item": "Gmail Token",
             "status": "expired",
-            "action": "Visit /api/oauth/authorize/gmail?user_id=YOUR_USER_ID to authorize Gmail"
+            "action": "Open the integrations panel to authorize Gmail with your signed-in account"
         })
     
     return {
@@ -626,9 +753,9 @@ async def system_status():
         },
         "setup_required": setup_requirements,
         "quick_start": {
-            "1_authorize_gmail": "/api/oauth/authorize/gmail?user_id=default",
-            "2_check_status": "/api/oauth/token/gmail?user_id=default",
-            "3_test_email": "/api/automation/quick/email?user_id=default&to=test@example.com&subject=Test&body=Hello",
+            "1_authorize_gmail": "Use /api/oauth/authorize/gmail with an authenticated user context.",
+            "2_check_status": "Use /api/oauth/token/gmail with an authenticated user context.",
+            "3_test_email": "Use /api/automation/quick/email with authenticated user context and explicit recipient parameters.",
             "4_chat": "/api/chat (POST with message)"
         },
         "health": monitor.get_overall_health() if monitor else {}

@@ -10,6 +10,7 @@ import {
   RefreshCw
 } from 'lucide-react'
 import { apiUrl } from '../lib/apiBase'
+import { getDevAuthHeaders } from '../lib/authHeaders'
 import './TaskPanel.css'
 
 /**
@@ -33,9 +34,10 @@ export default function TaskPanel({ userId, refreshTrigger = 0, onIterate }) {
   const fetchTasks = useCallback(async () => {
     if (!userId) return;
     try {
-      const res = await fetch(apiUrl(`/api/v2/tasks?user_id=${userId}`))
+      const res = await fetch(apiUrl('/api/v2/tasks'), { headers: getDevAuthHeaders() })
       if (res.ok) {
-        const data = await res.json()
+        let data = []
+        try { data = await res.json() } catch (_) { /* invalid JSON */ }
         setTasks(data || [])
         setLastUpdate(new Date())
       }
@@ -56,9 +58,10 @@ export default function TaskPanel({ userId, refreshTrigger = 0, onIterate }) {
   const fetchNotifications = useCallback(async () => {
     if (!userId) return;
     try {
-      const res = await fetch(apiUrl(`/api/v2/tasks/notifications?user_id=${userId}&unread_only=true`))
+      const res = await fetch(apiUrl('/api/v2/tasks/notifications?unread_only=true'), { headers: getDevAuthHeaders() })
       if (res.ok) {
-        const data = await res.json()
+        let data = []
+        try { data = await res.json() } catch (_) { /* invalid JSON */ }
         setNotifications(data || [])
       }
     } catch (err) {
@@ -84,7 +87,8 @@ export default function TaskPanel({ userId, refreshTrigger = 0, onIterate }) {
   const dismissNotification = async (notificationId) => {
     try {
       await fetch(apiUrl(`/api/v2/tasks/notifications/${notificationId}/read`), {
-        method: 'PUT'
+        method: 'PUT',
+        headers: getDevAuthHeaders(),
       })
       setNotifications(prev => prev.filter(n => n.id !== notificationId))
     } catch (err) {
@@ -181,40 +185,66 @@ export default function TaskPanel({ userId, refreshTrigger = 0, onIterate }) {
       <div className="task-list">
         {tasks.length === 0 ? (
           <div className="no-tasks">
-            <Clock size={32} className="no-tasks-icon" />
-            <p>No active tasks</p>
-            <span>Tasks will appear here when you ask me to do something</span>
+            <div className="no-tasks-icon-wrap">
+              <RefreshCw size={40} className="no-tasks-icon" />
+            </div>
+            <h3>No Active Missions</h3>
+            <p>Ready to orchestrate your next goal. Ask me to:</p>
+            <div className="task-suggestions">
+              <button onClick={() => onIterate(null, "Create an e-commerce website with React")}>"Build an e-commerce site"</button>
+              <button onClick={() => onIterate(null, "Schedule a meeting with the team for tomorrow")}>"Schedule a team meeting"</button>
+              <button onClick={() => onIterate(null, "Research the latest trends in AI agents")}>"Research AI agent trends"</button>
+            </div>
           </div>
         ) : (
           tasks.map(task => (
             <div 
               key={task.id} 
-              className={`task-card ${selectedTask?.id === task.id ? 'selected' : ''}`}
+              className={`task-card ${selectedTask?.id === task.id ? 'selected' : ''} ${task.status}`}
               onClick={() => setSelectedTask(selectedTask?.id === task.id ? null : task)}
             >
               {/* Task Header */}
               <div className="task-header">
-                {getStatusIcon(task.status)}
+                <div className="status-indicator">
+                  {getStatusIcon(task.status)}
+                </div>
                 <div className="task-info">
-                  <h3>{task.title}</h3>
+                  <div className="task-title-row">
+                    <h3>{task.title}</h3>
+                    <div className="task-badges">
+                       {task.status === 'waiting_input' && <span className="badge warning">Action Needed</span>}
+                       {task.status === 'in_progress' && <span className="badge processing">Live</span>}
+                    </div>
+                  </div>
                   <span className="task-type">{task.task_type}{task.created_at ? ` • ${formatTime(task.created_at)}` : ''}</span>
                 </div>
-                <ChevronRight 
-                  className={`expand-icon ${selectedTask?.id === task.id ? 'expanded' : ''}`} 
-                />
+                <button 
+                  className={`modify-btn ${selectedTask?.id === task.id ? 'active' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); setSelectedTask(selectedTask?.id === task.id ? null : task); }}
+                >
+                  {selectedTask?.id === task.id ? 'Close' : 'Modify'}
+                </button>
               </div>
 
               {/* Progress Bar */}
-              <div className="progress-container">
-                <div 
-                  className="progress-bar"
-                  style={{ 
-                    width: `${task.progress_percent}%`,
-                    backgroundColor: getProgressColor(task.progress_percent)
-                  }}
-                />
-                <span className="progress-text">{task.progress_percent}%</span>
+              <div className="progress-section">
+                <div className="progress-meta">
+                   <span className="progress-label">Progress</span>
+                   <span className="progress-value">{task.progress_percent}%</span>
+                </div>
+                <div className="progress-container">
+                  <div 
+                    className="progress-bar"
+                    style={{ 
+                      width: `${task.progress_percent}%`,
+                      backgroundColor: getProgressColor(task.progress_percent)
+                    }}
+                  >
+                    {task.status === 'in_progress' && <div className="progress-shimmer" />}
+                  </div>
+                </div>
               </div>
+
 
               {/* ETA */}
               {task.estimated_completion && (
@@ -260,25 +290,72 @@ export default function TaskPanel({ userId, refreshTrigger = 0, onIterate }) {
 
               {/* Iterate on this task */}
               {selectedTask?.id === task.id && (
-                <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '6px' }}>Iterate</div>
+                <div className="iterate-section" onClick={e => e.stopPropagation()}>
+                  <div className="iterate-header">
+                    <span>Re-iterate Mission</span>
+                    <RefreshCw size={12} />
+                  </div>
                   <textarea
                     value={iterateTextByTaskId[task.id] || ''}
                     onChange={(e) => setIterateTextByTaskId(prev => ({ ...prev, [task.id]: e.target.value }))}
                     rows={2}
-                    placeholder="Add more instructions for this task..."
-                    style={{ width: '100%', resize: 'none', padding: '8px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)', color: '#e6edf3', fontSize: '12px' }}
-                    onClick={(e) => e.stopPropagation()}
+                    placeholder="Provide updated instructions or changes..."
+                    autoFocus
                   />
+                  <div className="iterate-actions">
+                    <button
+                      className="iterate-send-btn"
+                      onClick={() => handleIterate(task)}
+                      disabled={!(iterateTextByTaskId[task.id] || '').trim()}
+                    >
+                      Update Mission
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Re-run Button (visible when task is completed) */}
+              {!selectedTask && task.status === 'completed' && (
+                <div style={{padding: '8px 12px', display: 'flex', gap: '8px', position: 'relative', zIndex: 10}}>
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleIterate(task); }}
-                    style={{ marginTop: '8px', width: '100%', padding: '8px 10px', borderRadius: '10px', border: '1px solid rgba(124,58,237,0.55)', background: 'rgba(124,58,237,0.22)', color: '#e6edf3', cursor: 'pointer', fontSize: '12px' }}
-                    title={typeof onIterate === 'function' ? 'Send follow-up for this task' : 'Iteration handler not wired'}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setIterateTextByTaskId(prev => ({ ...prev, [task.id]: task.title }));
+                      setSelectedTask(task);
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      background: 'rgba(99, 102, 241, 0.15)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      borderRadius: '6px',
+                      color: '#818cf8',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '4px',
+                      transition: 'all 0.2s',
+                      position: 'relative',
+                      zIndex: 20
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.background = 'rgba(99, 102, 241, 0.25)';
+                      e.target.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.background = 'rgba(99, 102, 241, 0.15)';
+                      e.target.style.borderColor = 'rgba(99, 102, 241, 0.3)';
+                    }}
                   >
-                    Send
+                    <RefreshCw size={10} /> Re-run
                   </button>
                 </div>
               )}
+
 
               {/* User Input Required */}
               {task.needs_user_input && (

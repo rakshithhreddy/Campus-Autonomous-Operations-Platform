@@ -12,7 +12,7 @@ export default function SparkLayout() {
     <div className="topbar-left">
       <div className="logo">S</div>
       <div>
-        <div className="title">Super Manager</div>
+        <div className="title">CAOP</div>
         <div className="subtitle">Agentic AI workspace</div>
       </div>
     </div>
@@ -187,7 +187,7 @@ export default function SparkLayout() {
       <div >
         <div >&#128172;</div>
         <div >Chat-only mode — no adaptive workspace</div>
-        <div >This is what Super Manager currently does: dumps everything into chat text. Switch to Code IDE or Meeting to see the difference.</div>
+        <div >This is what CAOP currently does: dumps everything into chat text. Switch to Code IDE or Meeting to see the difference.</div>
         <div >
           import os<br />
           project_name = 'MantiBank'<br />

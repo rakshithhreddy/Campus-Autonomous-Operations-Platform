@@ -679,7 +679,7 @@ export default function AdaptiveWorkspace({
       {/* Top Bar */}
       <div className="aw-topbar">
         <div className="aw-logo">S</div>
-        <div className="aw-brand">Super Manager</div>
+        <div className="aw-brand">CAOP</div>
         <div className="aw-online">
           <div className="aw-sdot" />
           <span>{currentTask ? `Working on: ${currentTask.message?.slice(0, 30)}...` : 'Waiting for a task...'}</span>

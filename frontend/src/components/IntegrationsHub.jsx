@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Plug, XCircle, Link as LinkIcon, RefreshCcw, AlertTriangle, Info, ExternalLink } from "lucide-react";
 import { apiUrl } from "../lib/apiBase";
+import { getDevAuthHeaders } from "../lib/authHeaders";
 import "./IntegrationsHub.css";
 
 // OAuth setup instructions for common issues
@@ -48,9 +49,10 @@ export default function IntegrationsHub({ userId = "default" }) {
   const fetchIntegrations = async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl(`/api/integrations/?user_id=${encodeURIComponent(userId)}`));
+      const res = await fetch(apiUrl('/api/integrations/'), { headers: getDevAuthHeaders() });
       if (res.ok) {
-        const data = await res.json();
+        let data = {};
+        try { data = await res.json(); } catch (_) { /* invalid JSON */ }
         setConnected(data.connected || []);
         setAvailable(data.available || []);
       }
@@ -82,11 +84,12 @@ export default function IntegrationsHub({ userId = "default" }) {
     try {
       const res = await fetch(apiUrl('/api/integrations/connect'), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, service })
+        headers: { "Content-Type": "application/json", ...getDevAuthHeaders() },
+        body: JSON.stringify({ service })
       });
       if (res.ok) {
-        const data = await res.json();
+        let data = {};
+        try { data = await res.json(); } catch (_) { /* invalid JSON */ }
         const redirectUrl = data.oauth_url || data.auth_url || data.authorization_url;
         if (redirectUrl) {
           // Open OAuth in new window to preserve chat state
@@ -147,8 +150,9 @@ export default function IntegrationsHub({ userId = "default" }) {
     if (!window.confirm(`Are you sure you want to revoke access to ${service}?`)) return;
     setProcessing(service);
     try {
-      const res = await fetch(apiUrl(`/api/integrations/service/${encodeURIComponent(service)}?user_id=${encodeURIComponent(userId)}`), {
+      const res = await fetch(apiUrl(`/api/integrations/service/${encodeURIComponent(service)}`), {
         method: "DELETE",
+        headers: getDevAuthHeaders(),
       });
       if (res.ok) {
         await fetchIntegrations(); // Refresh list
@@ -284,16 +288,27 @@ export default function IntegrationsHub({ userId = "default" }) {
                       </div>
                     </div>
                     <div className="text-sm text-gray-400 mb-4 flex-1">
-                      Connected on {new Date(app.connected_at).toLocaleDateString()}
+                      {app.note ? (
+                        <div className="flex items-center gap-1.5 text-blue-300 bg-blue-500/10 px-2 py-1 rounded border border-blue-500/20 mt-1">
+                          <Info className="w-3.5 h-3.5" />
+                          {app.note}
+                        </div>
+                      ) : (
+                        `Connected on ${new Date(app.connected_at).toLocaleDateString()}`
+                      )}
                     </div>
                     <div className="integration-actions flex justify-end">
-                      <button
-                        onClick={() => handleRevoke(app.service)}
-                        disabled={processing === app.service}
-                        className="btn-revoke px-3 py-1.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition disabled:opacity-50 text-sm"
-                      >
-                        {processing === app.service ? "Revoking..." : "Revoke Access"}
-                      </button>
+                      {(app.method === 'smtp' || app.method === 'builtin') ? (
+                        <div className="text-xs text-gray-500 italic">Managed via System Config</div>
+                      ) : (
+                        <button
+                          onClick={() => handleRevoke(app.service)}
+                          disabled={processing === app.service}
+                          className="btn-revoke px-3 py-1.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20 transition disabled:opacity-50 text-sm"
+                        >
+                          {processing === app.service ? "Revoking..." : "Revoke Access"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

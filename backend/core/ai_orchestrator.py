@@ -17,6 +17,12 @@ import logging
 import openai
 import anthropic
 
+from .openai_compat import (
+    get_openai_compatible_api_key,
+    get_openai_compatible_base_url,
+    get_openai_compatible_model,
+)
+
 from .task_engine import TaskEngine, TaskCategory, TaskStatus, SecurityLevel, IntentParser, TaskContext
 from .interactive_ui import UIBuilder, InteractiveResponse, ButtonGroup, Button, ButtonStyle, CardGrid, Form
 from .secure_payment import SecurePaymentService, PaymentMethod, PaymentStatus
@@ -58,12 +64,15 @@ class AIProvider:
     """AI model provider for natural language understanding"""
     
     def __init__(self):
-        self.openai_key = os.getenv("OPENAI_API_KEY")
+        self.openai_key = get_openai_compatible_api_key()
+        self.openai_base_url = get_openai_compatible_base_url()
+        self.openai_model = get_openai_compatible_model()
+
         self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         self.gemini_key = os.getenv("GOOGLE_AI_API_KEY")
-        
+
         if self.openai_key:
-            self.openai_client = openai.AsyncOpenAI(api_key=self.openai_key)
+            self.openai_client = openai.AsyncOpenAI(api_key=self.openai_key, base_url=self.openai_base_url)
         else:
             self.openai_client = None
             
@@ -112,7 +121,7 @@ Respond in JSON format:
         try:
             if self.openai_client:
                 response = await self.openai_client.chat.completions.create(
-                    model="gpt-4o",
+                    model=self.openai_model,
                     messages=messages,
                     response_format={"type": "json_object"},
                     temperature=0.3
@@ -163,7 +172,7 @@ Response type: {response_type}
         try:
             if self.openai_client:
                 response = await self.openai_client.chat.completions.create(
-                    model="gpt-4o",
+                    model=self.openai_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_context}

@@ -1,76 +1,38 @@
 [
   {
-    "task_type": "extract_names_and",
+    "task_type": "write_python_function",
     "keywords": [
-      "bob",
-      "ages:",
-      "john",
-      "and",
-      "who",
-      "25,",
-      "went",
-      "store.",
-      "names",
-      "mary",
-      "extract",
-      "32,"
+      "write",
+      "python",
+      "function",
+      "calculate",
+      "fibonacci",
+      "numbers"
     ],
     "steps": [
       {
         "step_type": "code",
         "description": "Code block using ",
-        "primitive_or_code": "import re\n\ntext = \"John is 25, Mary is 32, and Bob who is 40 went to the store.\"\nmatches = re.findall(r'(\\w+) is (\\d+)', text)\nnames_ages = {name: int(age) for name, age in matches}\nnames_ages",
+        "primitive_or_code": "def fibonacci(n):\n    if n <= 0:\n        return \"Input should be a positive integer\"\n    elif n == 1:\n        return 0\n    elif n == 2:\n        return 1\n    else:\n        a, b = 0, 1\n        for i in ",
         "params_template": {}
-      },
-      {
-        "step_type": "action",
-        "description": "web_search({\"query\": \"extract names and ages from text: 'John is 25, Mary is 32, and Bob who is 40 went to the )",
-        "primitive_or_code": "web_search",
-        "params_template": {
-          "query": "extract names and ages from text: 'John is 25, Mary is 32, and Bob who is 40 went to the store.'"
-        }
       },
       {
         "step_type": "code",
         "description": "Code block using ",
-        "primitive_or_code": "text = \"John is 25, Mary is 32, and Bob who is 40 went to the store.\"\nnames_ages = {}\n\n# Splitting the text into parts\nparts = text.split(\", \")\nfor part in parts:\n    # Extracting names and ages using",
-        "params_template": {}
-      }
-    ],
-    "success_count": 2,
-    "failure_count": 0,
-    "confidence": 0.5,
-    "positive_feedback": 0,
-    "negative_feedback": 0,
-    "last_used": "2026-03-22T12:03:02.634175",
-    "last_feedback": "",
-    "created": "2026-03-22T12:02:20.780836"
-  },
-  {
-    "task_type": "remember_that_favorite",
-    "keywords": [
-      "remember",
-      "that",
-      "favorite",
-      "framework",
-      "absolute",
-      "svelte."
-    ],
-    "steps": [
-      {
-        "step_type": "action",
-        "description": "save_note({})",
-        "primitive_or_code": "save_note",
+        "primitive_or_code": "def fibonacci(n):\n    if n <= 0:\n        return \"Input should be a positive integer\"\n    elif n == 1:\n        return 0\n    elif n == 2:\n        return 1\n    else:\n        a, b = 0, 1\n        for i in ",
         "params_template": {}
       },
       {
-        "step_type": "action",
-        "description": "save_note({\"content\": \"Favorite framework is Svelte.\", \"title\": \"Favorite Framework\"})",
-        "primitive_or_code": "save_note",
-        "params_template": {
-          "content": "Favorite framework is Svelte.",
-          "title": "Favorite Framework"
-        }
+        "step_type": "code",
+        "description": "Code block using ",
+        "primitive_or_code": "def fibonacci(n):\n    a, b = 0, 1\n    for i in range(n - 1):\n        a, b = b, a + b\n    return a\n\n# Corrected example usage:\nprint(fibonacci(10))  # Correct Output: 34",
+        "params_template": {}
+      },
+      {
+        "step_type": "code",
+        "description": "Code block using ",
+        "primitive_or_code": "def fibonacci(n):\n    a, b = 0, 1\n    for i in range(n - 1):\n        a, b = b, a + b\n    return a\n\n# Example usage:\nresult = fibonacci(10)\nprint(result)  # Output should be 34",
+        "params_template": {}
       }
     ],
     "success_count": 1,
@@ -78,200 +40,43 @@
     "confidence": 0.5,
     "positive_feedback": 0,
     "negative_feedback": 0,
-    "last_used": "2026-03-22T13:51:53.633766",
+    "last_used": "2026-04-28T21:06:55.512398",
     "last_feedback": "",
-    "created": "2026-03-22T13:51:53.633782"
+    "created": "2026-04-28T21:06:55.513408"
   },
   {
-    "task_type": "generate_image_ant",
+    "task_type": "what_bitcoin_price",
     "keywords": [
-      "generate",
-      "image",
-      "ant",
-      "trying",
-      "take",
-      "cokkies"
+      "what",
+      "bitcoin",
+      "price",
+      "today"
     ],
     "steps": [
       {
         "step_type": "action",
-        "description": "generate_image({\"prompt\": \"an ant trying to take cookies\"})",
-        "primitive_or_code": "generate_image",
-        "params_template": {
-          "prompt": "an ant trying to take cookies"
-        }
-      },
-      {
-        "step_type": "action",
-        "description": "generate_image({\"prompt\": \"an ant trying to take cookies\"})",
-        "primitive_or_code": "generate_image",
-        "params_template": {
-          "prompt": "an ant trying to take cookies"
-        }
-      }
-    ],
-    "success_count": 1,
-    "failure_count": 0,
-    "confidence": 0.5,
-    "positive_feedback": 0,
-    "negative_feedback": 0,
-    "last_used": "2026-03-22T14:00:37.141492",
-    "last_feedback": "",
-    "created": "2026-03-22T14:00:37.141663"
-  },
-  {
-    "task_type": "generate_image_red",
-    "keywords": [
-      "panda",
-      "wearing",
-      "sunglasses",
-      "generate",
-      "red",
-      "image"
-    ],
-    "steps": [
-      {
-        "step_type": "action",
-        "description": "generate_image({\"prompt\": \"a red panda wearing sunglasses\"})",
-        "primitive_or_code": "generate_image",
-        "params_template": {
-          "prompt": "a red panda wearing sunglasses"
-        }
-      },
-      {
-        "step_type": "action",
-        "description": "generate_image({\"prompt\": \"a red panda wearing sunglasses\"})",
-        "primitive_or_code": "generate_image",
-        "params_template": {
-          "prompt": "a red panda wearing sunglasses"
-        }
-      }
-    ],
-    "success_count": 2,
-    "failure_count": 0,
-    "confidence": 0.5,
-    "positive_feedback": 0,
-    "negative_feedback": 0,
-    "last_used": "2026-03-22T15:00:54.082491",
-    "last_feedback": "",
-    "created": "2026-03-22T14:55:38.333355"
-  },
-  {
-    "task_type": "create_banking_app",
-    "keywords": [
-      "create",
-      "bank",
-      "app",
-      "named",
-      "backend",
-      "security",
-      "banking",
-      "manti",
-      "all",
-      "frontend",
-      "with",
-      "everything"
-    ],
-    "steps": [
-      {
-        "step_type": "action",
-        "description": "web_search({\"query\": \"how to create a banking app with security features\"})",
+        "description": "web_search({\"query\": \"Bitcoin price today\", \"max_results\": 1})",
         "primitive_or_code": "web_search",
         "params_template": {
-          "query": "how to create a banking app with security features"
-        }
-      },
-      {
-        "step_type": "code",
-        "description": "Code block using scrape_data",
-        "primitive_or_code": "results = await scrape_data(\"https://medium.com/@swatiios/how-to-build-secure-banking-and-finance-apps-a-developers-guide-fe2930d8a246\", extract=\"key features, security measures\")\nresults2 = await scr",
-        "params_template": {}
-      },
-      {
-        "step_type": "code",
-        "description": "Code block using ",
-        "primitive_or_code": "# Outline of backend and frontend requirements for Manti Bank app\nbackend_requirements = {\n    \"technology_stack\": [\"Node.js\", \"Express\", \"MongoDB\", \"JWT for authentication\", \"OAuth for third-party in",
-        "params_template": {}
-      }
-    ],
-    "success_count": 2,
-    "failure_count": 0,
-    "confidence": 0.52,
-    "positive_feedback": 0,
-    "negative_feedback": 0,
-    "last_used": "2026-03-22T20:19:11.368480",
-    "last_feedback": "",
-    "created": "2026-03-22T19:14:16.582117"
-  },
-  {
-    "task_type": "create_ecommerce_website",
-    "keywords": [
-      "website",
-      "ecommerce",
-      "create"
-    ],
-    "steps": [
-      {
-        "step_type": "action",
-        "description": "web_search({\"query\": \"best eCommerce website builders 2023\"})",
-        "primitive_or_code": "web_search",
-        "params_template": {
-          "query": "best eCommerce website builders 2023"
+          "query": "Bitcoin price today",
+          "max_results": 1
         }
       },
       {
         "step_type": "action",
-        "description": "browse_page({\"url\": \"https://kerbco.com/11-best-ecommerce-website-builders-in-2023/\"})",
+        "description": "browse_page({\"url\": \"https://coinmarketcap.com/currencies/bitcoin/\"})",
         "primitive_or_code": "browse_page",
         "params_template": {
-          "url": "https://kerbco.com/11-best-ecommerce-website-builders-in-2023/"
+          "url": "https://coinmarketcap.com/currencies/bitcoin/"
         }
       },
       {
         "step_type": "action",
-        "description": "browse_page({\"url\": \"https://latenode.com/blog/tools-software-reviews/best-automation-tools/the-best-ecommerce-w)",
-        "primitive_or_code": "browse_page",
-        "params_template": {
-          "url": "https://latenode.com/blog/tools-software-reviews/best-automation-tools/the-best-ecommerce-website-building-platforms-in-2023"
-        }
-      }
-    ],
-    "success_count": 2,
-    "failure_count": 0,
-    "confidence": 0.52,
-    "positive_feedback": 0,
-    "negative_feedback": 0,
-    "last_used": "2026-03-23T13:44:23.317037",
-    "last_feedback": "",
-    "created": "2026-03-23T06:46:21.264542"
-  },
-  {
-    "task_type": "build_simple_todo",
-    "keywords": [
-      "build",
-      "simple",
-      "todo",
-      "list",
-      "app",
-      "with",
-      "express"
-    ],
-    "steps": [
-      {
-        "step_type": "action",
-        "description": "web_search({\"query\": \"build simple todo list app with express\"})",
-        "primitive_or_code": "web_search",
-        "params_template": {
-          "query": "build simple todo list app with express"
-        }
-      },
-      {
-        "step_type": "action",
-        "description": "scrape_data({\"url\": \"https://dev.to/vaibhavgupta09/building-a-simple-todo-api-with-expressjs-41fk\", \"extract\": \")",
+        "description": "scrape_data({\"url\": \"https://coinmarketcap.com/currencies/bitcoin/\", \"extract\": \"Bitcoin price\"})",
         "primitive_or_code": "scrape_data",
         "params_template": {
-          "url": "https://dev.to/vaibhavgupta09/building-a-simple-todo-api-with-expressjs-41fk",
-          "extract": "steps, code snippets, explanations"
+          "url": "https://coinmarketcap.com/currencies/bitcoin/",
+          "extract": "Bitcoin price"
         }
       }
     ],
@@ -280,67 +85,35 @@
     "confidence": 0.5,
     "positive_feedback": 0,
     "negative_feedback": 0,
-    "last_used": "2026-03-23T13:09:47.547994",
+    "last_used": "2026-04-28T21:09:17.614725",
     "last_feedback": "",
-    "created": "2026-03-23T13:09:47.547994"
+    "created": "2026-04-28T21:09:17.614725"
   },
   {
-    "task_type": "create_simple_landing",
+    "task_type": "have_any_upcoming",
     "keywords": [
-      "create",
-      "simple",
-      "landing",
-      "page"
-    ],
-    "steps": [
-      {
-        "step_type": "code",
-        "description": "Code block using ",
-        "primitive_or_code": "html_content = \"\"\"\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Simple Landing Page</title>\n",
-        "params_template": {}
-      },
-      {
-        "step_type": "action",
-        "description": "generate_image({\"prompt\": \"simple landing page HTML code\"})",
-        "primitive_or_code": "generate_image",
-        "params_template": {
-          "prompt": "simple landing page HTML code"
-        }
-      }
-    ],
-    "success_count": 1,
-    "failure_count": 0,
-    "confidence": 0.5,
-    "positive_feedback": 0,
-    "negative_feedback": 0,
-    "last_used": "2026-03-23T13:16:51.385122",
-    "last_feedback": "",
-    "created": "2026-03-23T13:16:51.385122"
-  },
-  {
-    "task_type": "build_simple_calculator",
-    "keywords": [
-      "build",
-      "simple",
-      "calculator",
-      "app"
+      "have",
+      "any",
+      "upcoming",
+      "events"
     ],
     "steps": [
       {
         "step_type": "action",
-        "description": "web_search({\"query\": \"build simple calculator app with JavaScript\"})",
+        "description": "web_search({\"query\": \"upcoming events\", \"max_results\": 5})",
         "primitive_or_code": "web_search",
         "params_template": {
-          "query": "build simple calculator app with JavaScript"
+          "query": "upcoming events",
+          "max_results": 5
         }
       },
       {
         "step_type": "action",
-        "description": "scrape_data({\"url\": \"https://www.geeksforgeeks.org/javascript/javascript-calculator/\", \"extract\": \"steps, code e)",
+        "description": "scrape_data({\"url\": \"https://allevents.in/bangalore/all\", \"extract\": \"event names, dates, descriptions\"})",
         "primitive_or_code": "scrape_data",
         "params_template": {
-          "url": "https://www.geeksforgeeks.org/javascript/javascript-calculator/",
-          "extract": "steps, code examples"
+          "url": "https://allevents.in/bangalore/all",
+          "extract": "event names, dates, descriptions"
         }
       }
     ],
@@ -349,32 +122,50 @@
     "confidence": 0.5,
     "positive_feedback": 0,
     "negative_feedback": 0,
-    "last_used": "2026-03-23T13:23:13.953628",
+    "last_used": "2026-04-29T22:56:44.703263",
     "last_feedback": "",
-    "created": "2026-03-23T13:23:13.953628"
+    "created": "2026-04-29T22:56:44.703263"
   },
   {
-    "task_type": "create_hello_world",
+    "task_type": "when_modt_teh",
     "keywords": [
-      "create",
-      "hello",
-      "world",
-      "html",
-      "page"
+      "when",
+      "modt",
+      "teh",
+      "agentic",
+      "ai's",
+      "are",
+      "there",
+      "market",
+      "\"caop\"",
+      "needed"
     ],
     "steps": [
       {
-        "step_type": "code",
-        "description": "Code block using ",
-        "primitive_or_code": "html_code = \"\"\"\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Hello World</title>\n</head>\n<bo",
-        "params_template": {}
+        "step_type": "action",
+        "description": "web_search({\"query\": \"unique features of CAOP AI assistant\", \"max_results\": 5})",
+        "primitive_or_code": "web_search",
+        "params_template": {
+          "query": "unique features of CAOP AI assistant",
+          "max_results": 5
+        }
       },
       {
         "step_type": "action",
-        "description": "generate_image({\"prompt\": \"simple landing page HTML code\"})",
-        "primitive_or_code": "generate_image",
+        "description": "scrape_data({\"url\": \"https://www.theinformation.com/articles/microsoft-plots-new-copilot-features-inspired-openc)",
+        "primitive_or_code": "scrape_data",
         "params_template": {
-          "prompt": "simple landing page HTML code"
+          "url": "https://www.theinformation.com/articles/microsoft-plots-new-copilot-features-inspired-openclaw",
+          "extract": "unique features"
+        }
+      },
+      {
+        "step_type": "action",
+        "description": "scrape_data({\"url\": \"https://www.aguidetocloud.com/blog/microsoft-copilot-cowork-complete-guide/\", \"extract\": \"u)",
+        "primitive_or_code": "scrape_data",
+        "params_template": {
+          "url": "https://www.aguidetocloud.com/blog/microsoft-copilot-cowork-complete-guide/",
+          "extract": "unique features"
         }
       }
     ],
@@ -383,8 +174,57 @@
     "confidence": 0.5,
     "positive_feedback": 0,
     "negative_feedback": 0,
-    "last_used": "2026-03-23T13:23:31.303516",
+    "last_used": "2026-04-30T12:36:03.668279",
     "last_feedback": "",
-    "created": "2026-03-23T13:23:31.303516"
+    "created": "2026-04-30T12:36:03.668279"
+  },
+  {
+    "task_type": "there_are_number",
+    "keywords": [
+      "there",
+      "are",
+      "number",
+      "tools",
+      "makret",
+      "yyou",
+      "need",
+      "this",
+      "caop",
+      "this",
+      "question",
+      "was",
+      "asked",
+      "faculty",
+      "whats",
+      "answer"
+    ],
+    "steps": [
+      {
+        "step_type": "action",
+        "description": "web_search({\"query\": \"CAOP tool market relevance\", \"max_results\": 5})",
+        "primitive_or_code": "web_search",
+        "params_template": {
+          "query": "CAOP tool market relevance",
+          "max_results": 5
+        }
+      },
+      {
+        "step_type": "action",
+        "description": "scrape_data({\"url\": \"https://www.sixsigma-institute.org/Six_Sigma_DMAIC_Process_Define_Phase_Change_Acceleration)",
+        "primitive_or_code": "scrape_data",
+        "params_template": {
+          "url": "https://www.sixsigma-institute.org/Six_Sigma_DMAIC_Process_Define_Phase_Change_Acceleration_Process_CAP.php",
+          "extract": "Change Acceleration Process details"
+        }
+      }
+    ],
+    "success_count": 1,
+    "failure_count": 0,
+    "confidence": 0.5,
+    "positive_feedback": 0,
+    "negative_feedback": 0,
+    "last_used": "2026-04-30T15:23:52.404744",
+    "last_feedback": "",
+    "created": "2026-04-30T15:23:52.404744"
   }
 ]

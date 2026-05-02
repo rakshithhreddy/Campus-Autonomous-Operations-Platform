@@ -10,9 +10,12 @@ import {
   Bot,
   Shield,
   Server,
-  Zap
+  Zap,
+  User
 } from 'lucide-react'
 import { apiUrl } from '../lib/apiBase'
+import { getDevAuthHeaders } from '../lib/authHeaders'
+import UserProfileSettings from './UserProfileSettings'
 import './AISettings.css'
 
 /**
@@ -28,7 +31,7 @@ export default function AISettings({ userId, onClose, onSave }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
-  const [activeTab, setActiveTab] = useState('email')
+  const [activeTab, setActiveTab] = useState('profile')
   
   // Email configuration
   const [email, setEmail] = useState('')
@@ -48,8 +51,9 @@ export default function AISettings({ userId, onClose, onSave }) {
     setLoading(true)
     try {
       // Get current identity
-      const identityRes = await fetch(apiUrl(`/api/identity/status/${userId}`))
-      const identityData = await identityRes.json()
+      const identityRes = await fetch(apiUrl(`/api/identity/status/${userId}`), { headers: getDevAuthHeaders() })
+      let identityData = {}
+      try { identityData = await identityRes.json() } catch (_) { /* invalid JSON */ }
       
       if (identityData.has_identity && identityData.identity) {
         setCurrentIdentity(identityData.identity)
@@ -58,9 +62,10 @@ export default function AISettings({ userId, onClose, onSave }) {
       }
 
       // Get service accounts
-      const accountsRes = await fetch(apiUrl(`/api/identity/services/${userId}`))
+      const accountsRes = await fetch(apiUrl(`/api/identity/services/${userId}`), { headers: getDevAuthHeaders() })
       if (accountsRes.ok) {
-        const accountsData = await accountsRes.json()
+        let accountsData = {}
+        try { accountsData = await accountsRes.json() } catch (_) { /* invalid JSON */ }
         setServiceAccounts(accountsData.services || [])
       }
       
@@ -84,16 +89,16 @@ export default function AISettings({ userId, onClose, onSave }) {
     try {
       const response = await fetch(`${API}/api/identity/setup`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
         body: JSON.stringify({
-          user_id: userId,
           email: email,
           app_password: appPassword,
           display_name: displayName
         })
       })
 
-      const data = await response.json()
+      let data = {}
+      try { data = await response.json() } catch (_) { data = { detail: `Server error (${response.status})` } }
 
       if (!response.ok) {
         throw new Error(data.detail || 'Setup failed')
@@ -139,6 +144,13 @@ export default function AISettings({ userId, onClose, onSave }) {
 
         {/* Tabs */}
         <div className="settings-tabs">
+          <button 
+            className={`tab ${activeTab === 'profile' ? 'active' : ''}`}
+            onClick={() => setActiveTab('profile')}
+          >
+            <User size={16} />
+            User Profile
+          </button>
           <button 
             className={`tab ${activeTab === 'email' ? 'active' : ''}`}
             onClick={() => setActiveTab('email')}
@@ -282,6 +294,13 @@ export default function AISettings({ userId, onClose, onSave }) {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Profile Tab */}
+          {activeTab === 'profile' && (
+            <div className="tab-content" style={{ padding: 0 }}>
+              <UserProfileSettings userId={userId} />
             </div>
           )}
         </div>

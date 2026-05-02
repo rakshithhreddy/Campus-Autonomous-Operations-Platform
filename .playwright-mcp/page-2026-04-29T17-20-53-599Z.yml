@@ -1,0 +1,77 @@
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: S
+    - generic [ref=e6]: Super Manager
+    - generic [ref=e9]: Waiting for a task...
+    - generic [ref=e10]:
+      - button "Tasks" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+        - text: Tasks
+      - button "Connect" [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+        - text: Connect
+      - button "Settings" [ref=e18] [cursor=pointer]:
+        - img [ref=e19]
+      - button "Governance" [ref=e22] [cursor=pointer]:
+        - img [ref=e23]
+        - text: Governance
+  - generic [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e28]:
+        - generic [ref=e29]: Hey. Tell me what you need done. I'll figure out the rest.
+        - generic [ref=e30]: Now
+      - generic [ref=e31]:
+        - textbox "what do you want done?" [ref=e32]
+        - button "Send" [disabled] [ref=e33]:
+          - img [ref=e34]
+          - text: Send
+      - generic [ref=e37]:
+        - generic [ref=e38]: "Quick Start (fills only):"
+        - button "📝 Write code" [ref=e39] [cursor=pointer]
+        - button "📧 Draft email" [ref=e40] [cursor=pointer]
+        - button "🎨 Design UI" [ref=e41] [cursor=pointer]
+        - button "📊 Analyze data" [ref=e42] [cursor=pointer]
+        - button "🔍 Research" [ref=e43] [cursor=pointer]
+    - generic [ref=e45]:
+      - generic [ref=e46]:
+        - generic [ref=e47]: S
+        - generic [ref=e48]:
+          - generic [ref=e49]: What do you need done?
+          - generic [ref=e50]: Click any task below — it runs immediately, no configuration needed.
+      - generic [ref=e51]:
+        - generic [ref=e52]:
+          - generic [ref=e53]: ⚡
+          - generic [ref=e54]: Code & Build
+          - generic [ref=e56]: VERIFIED ✓
+        - generic [ref=e57]:
+          - button "build a beautiful todo app in HTML CSS JS" [ref=e58] [cursor=pointer]
+          - button "write a Python web scraper for product prices" [ref=e59] [cursor=pointer]
+          - button "create a React dashboard with charts" [ref=e60] [cursor=pointer]
+          - button "build a REST API in FastAPI with auth" [ref=e61] [cursor=pointer]
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]: 🌐
+          - generic [ref=e65]: Research & Web
+          - generic [ref=e67]: VERIFIED ✓
+        - generic [ref=e68]:
+          - button "what is Bitcoin price right now" [ref=e69] [cursor=pointer]
+          - button "research the best AI tools in 2025" [ref=e70] [cursor=pointer]
+          - button "find top 5 laptops under $1000 with specs" [ref=e71] [cursor=pointer]
+          - button "get latest news about OpenAI" [ref=e72] [cursor=pointer]
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - generic [ref=e75]: ✉️
+          - generic [ref=e76]: Email & Comms
+          - generic [ref=e78]: VERIFIED ✓
+        - generic [ref=e79]:
+          - button "draft a professional project update email to my team" [ref=e80] [cursor=pointer]
+          - button "write a cold outreach email to a potential client" [ref=e81] [cursor=pointer]
+          - button "compose a follow-up email after a meeting" [ref=e82] [cursor=pointer]
+      - generic [ref=e83]:
+        - generic [ref=e84]:
+          - generic [ref=e85]: 📅
+          - generic [ref=e86]: Meetings
+          - generic [ref=e88]: VERIFIED ✓
+        - generic [ref=e89]:
+          - button "schedule a team standup meeting for tomorrow at 10am" [ref=e90] [cursor=pointer]
+          - button "create a Jitsi meeting link for a client call" [ref=e91] [cursor=pointer]

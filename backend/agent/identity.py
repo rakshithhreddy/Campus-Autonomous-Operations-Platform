@@ -37,6 +37,11 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+try:
+    from ..config import get_settings
+except ImportError:  # pragma: no cover
+    from backend.config import get_settings
+
 # Supabase - REQUIRED in production
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
@@ -54,7 +59,7 @@ def _validate_env():
         missing.append("SUPABASE_URL")
     if not SUPABASE_KEY:
         missing.append("SUPABASE_KEY")
-    if not ENCRYPTION_SECRET:
+    if not (os.getenv("ENCRYPTION_SECRET", "") or os.getenv("SECRET_KEY", "") or get_settings().encryption_secret or get_settings().secret_key):
         missing.append("ENCRYPTION_SECRET")
     if missing:
         import warnings
@@ -98,19 +103,13 @@ class EncryptionManager:
     """Handles encryption/decryption of sensitive data"""
     
     def __init__(self, secret: str = None, user_salt: str = None):
-        # Use provided secret or fall back to env var
-        secret = secret or ENCRYPTION_SECRET
-        
-        # Track whether real encryption is available
-        self._enabled = bool(secret)
-        
-        if not self._enabled:
-            # No encryption secret - use reversible encoding (NOT secure, just obfuscation)
-            # In production, ENCRYPTION_SECRET should always be set
-            import warnings
-            warnings.warn("ENCRYPTION_SECRET not set - using base64 encoding (NOT SECURE)")
-            self.fernet = None
-            return
+        # Use the strongest available persistent secret source so credentials
+        # remain decryptable across restarts instead of silently downgrading.
+        secret = secret or os.getenv("ENCRYPTION_SECRET", "") or os.getenv("SECRET_KEY", "") or get_settings().encryption_secret or get_settings().secret_key
+        if not secret:
+            raise RuntimeError("Encryption secret is required for credential storage")
+
+        self._enabled = True
         
         # Salt should be unique per user for best security
         # If not provided, use a default (less secure but functional)
