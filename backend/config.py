@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # Security Settings
     # ==========================================================================
     cors_origins: str = Field(
-        default="http://localhost:3000,http://localhost:5173",
+        default="http://localhost:3000,http://localhost:5173,http://localhost:3006",
         description="Comma-separated CORS origins"
     )
     rate_limit_per_minute: int = Field(default=100, ge=1, description="Rate limit per minute")
