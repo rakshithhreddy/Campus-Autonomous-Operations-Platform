@@ -69,6 +69,7 @@ function AgentSteps({ steps }) {
 function App() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
+  const [attachments, setAttachments] = useState([])
   const [loading, setLoading] = useState(false)
   const [sessionId, setSessionId] = useState(null)
   const [pendingConfirm, setPendingConfirm] = useState(false)
@@ -83,11 +84,11 @@ function App() {
   const endRef = useRef(null)
   const inputRef = useRef(null)
 
-  // Initialize userId from localStorage
   useEffect(() => {
-    let id = localStorage.getItem('super_manager_user_id')
-    if (!id) { id = 'user_' + Math.random().toString(36).substring(2, 15); localStorage.setItem('super_manager_user_id', id) }
-    setUserId(id)
+    // In development, force 'dev-user' to match backend dev-header bypass
+    const id = 'dev-user';
+    setUserId(id);
+    localStorage.setItem('super_manager_user_id', id);
   }, [])
 
   // Load chat history from localStorage on mount
@@ -133,16 +134,28 @@ function App() {
 
   
 
-  const send = async (text) => {
+  const send = async (text, options = {}) => {
     const msg = text || input.trim()
-    if (!msg || loading) return
+    const outgoingAttachments = Array.isArray(options.attachments) ? options.attachments : attachments
+    if ((!msg && outgoingAttachments.length === 0) || loading) return
     setInput(''); setLoading(true); setPendingConfirm(false)
-    setMessages(prev => [...prev, { role: 'user', text: msg, timestamp: new Date() }])
+    setAttachments([])
+    setMessages(prev => [...prev, {
+      role: 'user',
+      text: msg,
+      attachments: outgoingAttachments.map(a => ({ filename: a.filename, content_type: a.content_type })),
+      timestamp: new Date(),
+    }])
     try {
       const res = await fetch(apiUrl('/api/chat'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getDevAuthHeaders() },
-        body: JSON.stringify({ message: msg, session_id: sessionId }),
+        body: JSON.stringify({
+          message: msg,
+          session_id: sessionId,
+          attachments: outgoingAttachments.length ? outgoingAttachments : undefined,
+          attachment: outgoingAttachments[0] || undefined, // backward compatibility with older backend shape
+        }),
       })
 
       // Safe JSON parse — guard against empty or non-JSON body
@@ -211,6 +224,8 @@ function App() {
       messages={messages}
       input={input}
       setInput={setInput}
+      attachments={attachments}
+      setAttachments={setAttachments}
       send={send}
       loading={loading}
       AgentSteps={AgentSteps}

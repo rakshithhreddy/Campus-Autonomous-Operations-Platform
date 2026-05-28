@@ -557,14 +557,19 @@ render();
 # =============================================================================
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=10000)
+    message: str = Field(..., min_length=0, max_length=10000)
     session_id: Optional[str] = Field(None, max_length=100)
+    attachment: Optional[Dict[str, Any]] = None  # { filename, content_type, data (base64) }
+    attachments: Optional[List[Dict[str, Any]]] = None  # [{ filename, content_type, data (base64) }]
     # user_id intentionally removed — always derived from authenticated principal (Item 3)
     
     @validator('message')
-    def clean_message(cls, v):
+    def clean_message(cls, v, values):
+        # allow empty message if there's an attachment
         if not v or not v.strip():
-            raise ValueError('Message cannot be empty')
+            if 'attachment' not in values or not values['attachment']:
+                raise ValueError('Message cannot be empty if no attachment is provided')
+            return ""
         return v.strip()
     
     @validator('session_id')
@@ -695,7 +700,42 @@ async def chat_endpoint(
     # Support continuing an existing task with `/TASK_ID your message...`.
     # This keeps the same session_id so the agent has full conversation memory.
     parent_task_id = None
+    # Process attachment(s)
     message = request.message or ""
+    incoming_attachments: List[Dict[str, Any]] = []
+    if isinstance(request.attachments, list):
+        incoming_attachments.extend([a for a in request.attachments if isinstance(a, dict)])
+    if request.attachment and isinstance(request.attachment, dict):
+        incoming_attachments.append(request.attachment)
+    if incoming_attachments:
+        try:
+            import base64
+            for attachment in incoming_attachments:
+                # Attempt to decode text-based attachments
+                # Data is usually "data:text/plain;base64,....." or just base64.
+                # Frontend sends dataUrl from FileReader.readAsDataURL.
+                data_url = attachment.get("data", "")
+                if "," in data_url:
+                    base64_data = data_url.split(",")[1]
+                else:
+                    base64_data = data_url
+
+                # Simple text extraction for basic files (MVP)
+                # In a full implementation, you would route images to a Vision model
+                try:
+                    decoded_bytes = base64.b64decode(base64_data)
+                    decoded_text = decoded_bytes.decode('utf-8')
+
+                    # Append to message
+                    filename = attachment.get("filename", "attached_file")
+                    attachment_prompt = f"\n\n--- Attached File: {filename} ---\n{decoded_text}\n-------------------"
+                    message += attachment_prompt
+                except UnicodeDecodeError:
+                    # If it's binary/image and vision isn't fully set up yet
+                    message += f"\n\n[User attached a file: {attachment.get('filename')}, but it could not be read as text. If you support images, tell the user, otherwise let them know you can only read text files right now.]"
+        except Exception as e:
+            logger.error(f"Error processing attachment: {str(e)}")
+
     m = re.match(r"^\s*/(?P<task_id>[a-zA-Z0-9\-_]+)\s*(?P<rest>.*)$", message, re.DOTALL)
     if m:
         parent_task_id = m.group("task_id")
@@ -834,8 +874,35 @@ async def chat_stream_endpoint(
     user_id = principal.user_id
 
     async def generate():
+        # Process attachment(s)
+        message = request.message or ""
+        incoming_attachments: List[Dict[str, Any]] = []
+        if isinstance(request.attachments, list):
+            incoming_attachments.extend([a for a in request.attachments if isinstance(a, dict)])
+        if request.attachment and isinstance(request.attachment, dict):
+            incoming_attachments.append(request.attachment)
+        if incoming_attachments:
+            try:
+                import base64
+                for attachment in incoming_attachments:
+                    data_url = attachment.get("data", "")
+                    if "," in data_url:
+                        base64_data = data_url.split(",")[1]
+                    else:
+                        base64_data = data_url
+
+                    try:
+                        decoded_bytes = base64.b64decode(base64_data)
+                        decoded_text = decoded_bytes.decode('utf-8')
+                        filename = attachment.get("filename", "attached_file")
+                        message += f"\n\n--- Attached File: {filename} ---\n{decoded_text}\n-------------------"
+                    except UnicodeDecodeError:
+                        message += f"\n\n[User attached a file: {attachment.get('filename')}, but it could not be read as text.]"
+            except Exception as e:
+                logger.error(f"Error processing attachment: {str(e)}")
+
         try:
-            async for event in brain.process_stream(session_id, request.message, user_id):
+            async for event in brain.process_stream(session_id, message, user_id):
                 event_data = event.to_dict()
                 yield f"data: {json.dumps(event_data)}\n\n"
 

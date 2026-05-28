@@ -1534,7 +1534,7 @@ const CAPABILITY_GROUPS = [
 const EXAMPLE_TASKS = CAPABILITY_GROUPS.flatMap(g => g.tasks.map(t => ({ text: t.text, type: g.category })));
 
 export default function TaskAdaptiveWorkspace({ 
-  messages, input, setInput, send, loading, AgentSteps, UIComponentRenderer, sessionId, userId,
+  messages, input, setInput, attachments = [], setAttachments, send, loading, AgentSteps, UIComponentRenderer, sessionId, userId,
   // New props for Settings, Integrations, TaskPanel
   showSettings, setShowSettings,
   showIntegrations, setShowIntegrations,
@@ -1544,6 +1544,7 @@ export default function TaskAdaptiveWorkspace({
   SettingsPanel, IntegrationsPanel, GovernancePanel, FacultyEmailPanel, TaskPanelComponent
 }) {
   const endRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [workspaceState, setWorkspaceState] = useState('home'); // home, thinking, active
   const [taskType, setTaskType] = useState(null);
   const [taskMessage, setTaskMessage] = useState('');
@@ -1627,6 +1628,46 @@ export default function TaskAdaptiveWorkspace({
     if (newOp) setNewOp(false);
     return send(...args);
   };
+
+  const fileToAttachment = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      filename: file.name,
+      content_type: file.type || 'application/octet-stream',
+      data: reader.result,
+      size: file.size,
+    });
+    reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+
+  const addFiles = async (filesLike) => {
+    if (!setAttachments) return;
+    const files = Array.from(filesLike || []);
+    if (!files.length) return;
+    try {
+      const prepared = await Promise.all(files.map(fileToAttachment));
+      setAttachments((prev) => {
+        const next = [...prev];
+        for (const item of prepared) {
+          const exists = next.some(
+            (existing) => existing.filename === item.filename && existing.size === item.size && existing.data === item.data
+          );
+          if (!exists) next.push(item);
+        }
+        return next;
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const removeAttachment = (index) => {
+    if (!setAttachments) return;
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const sendWithAttachments = () => localSend(undefined, { attachments });
 
   const handleExampleClick = (example) => {
     const text = example.text || example;
@@ -1728,7 +1769,27 @@ export default function TaskAdaptiveWorkspace({
               <div key={idx} className={m.role === 'user' ? 'mu' : 'ma'}>
                 <div className="bub">
                     {m.role === 'user' ? (
-                       m.text
+                      <>
+                        {m.text}
+                        {Array.isArray(m.attachments) && m.attachments.length > 0 && (
+                          <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {m.attachments.map((a, ai) => (
+                              <span
+                                key={`${a.filename || 'attachment'}-${ai}`}
+                                style={{
+                                  fontSize: '11px',
+                                  background: 'rgba(255,255,255,0.16)',
+                                  border: '1px solid rgba(255,255,255,0.22)',
+                                  padding: '3px 8px',
+                                  borderRadius: '999px',
+                                }}
+                              >
+                                📎 {a.filename || 'attachment'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </>
                     ) : (
                        <ReactMarkdown 
                          remarkPlugins={[remarkGfm]}
@@ -1806,6 +1867,17 @@ export default function TaskAdaptiveWorkspace({
           </div>
           
           <div className="chat-input-area" style={{display: 'flex', borderTop: '1px solid rgba(99,102,241,0.1)', padding: '16px 20px', background: 'rgba(11,15,25,0.8)', backdropFilter: 'blur(12px)', alignItems: 'flex-end', gap: '12px'}}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.txt,.md,.csv,.json,.pdf,.doc,.docx,.xlsx"
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                await addFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
             <textarea
               id="chatInput"
               placeholder="what do you want done?"
@@ -1820,7 +1892,18 @@ export default function TaskAdaptiveWorkspace({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                    localSend();
+                    sendWithAttachments();
+                }
+              }}
+              onPaste={async (e) => {
+                const items = Array.from(e.clipboardData?.items || []);
+                const imageFiles = items
+                  .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                  .map((item) => item.getAsFile())
+                  .filter(Boolean);
+                if (imageFiles.length > 0) {
+                  e.preventDefault();
+                  await addFiles(imageFiles);
                 }
               }}
               style={{
@@ -1842,17 +1925,35 @@ export default function TaskAdaptiveWorkspace({
                 e.target.style.boxShadow = 'inset 0 2px 4px rgba(0,0,0,0.2)';
               }}
             />
-            <button 
-              onClick={() => localSend()}
-              disabled={!input.trim() || loading}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              title="Attach files"
               style={{
-                background: input.trim() ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : 'rgba(30,30,50,0.5)',
-                color: input.trim() ? '#fff' : '#484f58',
+                background: 'rgba(30,30,50,0.7)',
+                color: '#a5b4fc',
+                border: '1px solid rgba(99,102,241,0.25)',
+                borderRadius: '12px',
+                padding: '12px 14px',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+              }}
+            >
+              📎
+            </button>
+            <button 
+              onClick={() => sendWithAttachments()}
+              disabled={(!input.trim() && attachments.length === 0) || loading}
+              style={{
+                background: (input.trim() || attachments.length) ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : 'rgba(30,30,50,0.5)',
+                color: (input.trim() || attachments.length) ? '#fff' : '#484f58',
                 border: 'none', borderRadius: '12px',
-                padding: '14px 20px', cursor: input.trim() && !loading ? 'pointer' : 'not-allowed',
+                padding: '14px 20px', cursor: (input.trim() || attachments.length) && !loading ? 'pointer' : 'not-allowed',
                 transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                 fontWeight: 600, fontSize: '14px',
-                boxShadow: input.trim() ? '0 4px 15px rgba(99,102,241,0.4)' : 'none',
+                boxShadow: (input.trim() || attachments.length) ? '0 4px 15px rgba(99,102,241,0.4)' : 'none',
                 display: 'flex', alignItems: 'center', gap: '6px'
               }}
             >
@@ -1860,6 +1961,43 @@ export default function TaskAdaptiveWorkspace({
               Send
             </button>
           </div>
+          {attachments.length > 0 && (
+            <div style={{ padding: '0 20px 12px', display: 'flex', flexWrap: 'wrap', gap: '8px', background: 'rgba(11,15,25,0.8)' }}>
+              {attachments.map((a, i) => (
+                <div
+                  key={`${a.filename || 'attachment'}-${i}`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: 'rgba(99,102,241,0.14)',
+                    border: '1px solid rgba(99,102,241,0.35)',
+                    borderRadius: '999px',
+                    padding: '4px 10px',
+                    fontSize: '11px',
+                    color: '#c7d2fe',
+                  }}
+                >
+                  <span>📎 {a.filename || `attachment-${i + 1}`}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#e2e8f0',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      lineHeight: 1,
+                    }}
+                    aria-label={`Remove ${a.filename || 'attachment'}`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           
           {/* QUICK ACTIONS - fills empty space */}
           <div className="quick-actions-bar" style={{padding: '10px 14px', borderTop: '1px solid #30363d', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', background: 'rgba(99, 102, 241, 0.02)'}}>
