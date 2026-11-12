@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 .venv/
+.venv_local/
 env/
 venv/
 ENV/
@@ -32,6 +33,7 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+data/evidence/
 
 # Credentials & Secrets
 firebase-credentials.json
@@ -46,6 +48,9 @@ token.json
 .env
 .env.*
 !.env.example
+
+# Local launcher state
+caop-*.log
 
 # Node
 node_modules/

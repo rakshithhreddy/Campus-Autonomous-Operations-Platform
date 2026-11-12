@@ -604,6 +604,7 @@ async def health_check():
     
     return {
         "status": "healthy" if all_healthy else "degraded",
+        "timestamp": time.time(),
         "ai_providers": ai_router.get_available_providers() if ai_router else [],
         "websocket_connections": app.state.ws_manager.get_stats() if hasattr(app.state, 'ws_manager') else {},
         "circuit_breakers": circuit_status,

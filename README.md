@@ -93,7 +93,25 @@ Still in progress:
 
 ## Getting started
 
-The repository is designed for local development with dev principal headers and guarded backend defaults. Refer to the backend and frontend entry points above for the supported flow.
+The repository is designed for local development with dev principal headers and guarded backend defaults. Use Python 3.11+ and Node.js 18+.
+
+### Windows quick start
+
+Double-click [`CAOP.bat`](CAOP.bat) from the repository root. It starts the backend on `http://127.0.0.1:8000`, starts the Vite frontend on `http://127.0.0.1:3006`, waits for backend health, and opens the frontend. Use [`CAOP-STOP.bat`](CAOP-STOP.bat) to stop processes listening on those two development ports.
+
+### Manual start
+
+```powershell
+# backend, from the repository root
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+
+# frontend, in a second terminal
+Set-Location frontend
+npm install
+npm run dev -- --host 127.0.0.1 --port 3006
+```
+
+Copy `.env.example` to `backend/.env` and provide only the services you intend to use. Never commit `.env`, OAuth tokens, service-account files, or API keys. AI, Supabase, Zoom, Gmail, SMTP, and messaging integrations remain unavailable until their corresponding credentials and external configuration are supplied.
 
 ## Product materials
 

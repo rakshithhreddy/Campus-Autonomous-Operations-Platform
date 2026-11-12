@@ -7,7 +7,7 @@ Tests for the main API endpoints.
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, AsyncMock
 
 
 class TestHealthEndpoint:
@@ -66,12 +66,13 @@ class TestChatEndpoint:
         )
         assert response.status_code in [400, 422]
     
-    @patch("core.brain.SuperManagerBrain.process_message")
+    @patch("backend.routes.api.chat", new_callable=AsyncMock)
     def test_chat_success(self, mock_process, client, auth_headers, sample_chat_request):
         """Successful chat should return AI response"""
         mock_process.return_value = {
-            "response": "Hello! I can help you.",
-            "conversation_id": "conv-123"
+            "message": "Hello! I can help you.",
+            "type": "answer",
+            "status": "done",
         }
         
         response = client.post(

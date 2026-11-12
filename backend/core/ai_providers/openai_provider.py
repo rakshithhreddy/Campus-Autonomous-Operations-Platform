@@ -8,12 +8,6 @@ from typing import Dict, Any, List, Optional, AsyncGenerator, Union
 import json
 
 from .base_provider import BaseAIProvider, ProviderConfig, AIResponse, ProviderStatus
-from ..openai_compat import (
-    get_openai_compatible_api_key,
-    get_openai_compatible_base_url,
-    get_openai_compatible_model,
-)
-
 try:
     from openai import AsyncOpenAI
     OPENAI_AVAILABLE = True
@@ -54,12 +48,14 @@ class OpenAIProvider(BaseAIProvider):
     def __init__(self):
         super().__init__()
 
-        # Treat Kimi (Moonshot) as an OpenAI-compatible endpoint.
-        self.api_key = get_openai_compatible_api_key()
-        self.base_url = get_openai_compatible_base_url()
-
-        # Allow env to override the default model (e.g. KIMI_MODEL).
-        self.config.default_model = get_openai_compatible_model()
+        # OpenAI is an independent fallback; Kimi has its own provider.
+        self.api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+        self.base_url = (
+            os.getenv("OPENAI_BASE_URL") or self.config.base_url
+        ).strip().rstrip("/")
+        self.config.default_model = (
+            os.getenv("OPENAI_MODEL") or self.config.default_model
+        ).strip()
 
         self._client = None
 
@@ -72,7 +68,7 @@ class OpenAIProvider(BaseAIProvider):
             if not OPENAI_AVAILABLE:
                 self._last_error = "openai package not installed"
             else:
-                self._last_error = "KIMI_API_KEY / OPENAI_API_KEY not set"
+                self._last_error = "OPENAI_API_KEY not set"
     
     async def health_check(self) -> bool:
         """Check if the OpenAI-compatible API is accessible.

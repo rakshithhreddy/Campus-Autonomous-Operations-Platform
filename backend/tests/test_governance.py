@@ -192,7 +192,12 @@ def test_critical_step_requires_multiple_approvals(client, auth_headers):
     first_approval = client.post(
         f"/api/governance/missions/{mission['mission_id']}/approval",
         json={"step_id": step_id, "decision": "approve", "reason": "Manager reviewed"},
-        headers=auth_headers,
+        headers={
+            "Content-Type": "application/json",
+            "X-Dev-User-Id": "manager-user",
+            "X-Dev-Tenant-Id": "test-tenant",
+            "X-Dev-Roles": "manager",
+        },
     )
     assert first_approval.status_code == 200
     assert first_approval.json()["required_approvals"] >= 2

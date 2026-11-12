@@ -106,7 +106,7 @@ class TestChatRequestValidation:
         
         request = ChatRequest(
             message="Hello, can you help me?",
-            conversation_id="conv-123"
+            session_id="conv-123"
         )
         
         assert request.message == "Hello, can you help me?"
