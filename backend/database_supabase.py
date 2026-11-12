@@ -50,10 +50,20 @@ async def init_db():
         return False
     
     try:
-        # Test connection by querying system tables
-        result = client.table("tasks").select("id").limit(1).execute()
+        # The Supabase SDK call is synchronous; keep DNS/network failures from
+        # blocking FastAPI startup and leave the app in explicit memory-only mode.
+        await asyncio.wait_for(
+            asyncio.to_thread(
+                lambda: client.table("tasks").select("id").limit(1).execute()
+            ),
+            timeout=10,
+        )
         print("[DB] [OK] Connected to Supabase PostgreSQL")
         return True
+    except asyncio.TimeoutError:
+        print("[DB] [WARN] Supabase connection timed out")
+        print("[DB] System will run in memory-only mode")
+        return False
     except Exception as e:
         print(f"[DB] [WARN] Connection test failed: {e}")
         print("[DB] Please run the SQL migration to create tables")

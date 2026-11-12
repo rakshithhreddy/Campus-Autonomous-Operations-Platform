@@ -61,4 +61,6 @@
 - The application starts in degraded health locally because no AI provider is available to the runtime and database readiness is not established.
 - The launcher currently reports degraded health rather than falsely claiming provider/database readiness.
 - Follow-up fix: `CAOP.bat` now recovers when only the frontend or backend is already running, instead of leaving a split-brain local stack.
+- Follow-up fix: Supabase startup checks now run off the event loop with a timeout, so unreachable database DNS cannot hang the backend.
+- After the database timeout fix, `CAOP.bat` returned both backend health and frontend responses successfully; shutdown left ports 8000 and 3006 free.
 - The unrelated pre-existing `backend/data/strategies.json` and `.agent.md` changes are intentionally excluded from this synchronization.
