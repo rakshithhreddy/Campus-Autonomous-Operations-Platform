@@ -48,27 +48,31 @@ if not exist "%ROOT%\frontend\package.json" (
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%BACKEND_PORT% .*LISTENING"') do set "BACKEND_PID=%%P"
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%FRONTEND_PORT% .*LISTENING"') do set "FRONTEND_PID=%%P"
 if defined BACKEND_PID if defined FRONTEND_PID (
-  echo CAOP is already running.
-  start "" "%FRONTEND_URL%"
-  exit /b 0
-)
-if defined BACKEND_PID (
-  echo ERROR: port %BACKEND_PORT% is already in use by PID %BACKEND_PID%.
-  echo Stop that service or run CAOP-STOP.bat.
-  pause
-  exit /b 1
-)
-if defined FRONTEND_PID (
-  echo ERROR: port %FRONTEND_PORT% is already in use by PID %FRONTEND_PID%.
-  echo Stop that service or run CAOP-STOP.bat.
+  curl.exe --silent --fail "%BACKEND_URL%" >nul 2>nul
+  if not errorlevel 1 (
+    echo CAOP is already running.
+    start "" "%FRONTEND_URL%"
+    exit /b 0
+  )
+  echo ERROR: backend port %BACKEND_PORT% is occupied by PID %BACKEND_PID% but is not healthy.
+  echo Inspect the CAOP Backend process or run CAOP-STOP.bat.
   pause
   exit /b 1
 )
 
-echo Starting backend...
-start "CAOP Backend" /D "%ROOT%" cmd /k ""%PYTHON%" -m uvicorn backend.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
-echo Starting frontend...
-start "CAOP Frontend" /D "%ROOT%\frontend" cmd /k "npm run dev -- --host 127.0.0.1 --port %FRONTEND_PORT%"
+if not defined BACKEND_PID (
+  echo Starting backend...
+  start "CAOP Backend" /D "%ROOT%" cmd /k ""%PYTHON%" -m uvicorn backend.main:app --host 127.0.0.1 --port %BACKEND_PORT%"
+) else (
+  echo Backend is already running on port %BACKEND_PORT%.
+)
+
+if not defined FRONTEND_PID (
+  echo Starting frontend...
+  start "CAOP Frontend" /D "%ROOT%\frontend" cmd /k "npm run dev -- --host 127.0.0.1 --port %FRONTEND_PORT%"
+) else (
+  echo Frontend is already running on port %FRONTEND_PORT%.
+)
 
 echo Waiting for backend readiness...
 set /a ATTEMPTS=0

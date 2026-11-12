@@ -60,4 +60,5 @@
 - Gmail values are present locally, but SMTP authentication and OAuth refresh both failed; no email was sent.
 - The application starts in degraded health locally because no AI provider is available to the runtime and database readiness is not established.
 - The launcher currently reports degraded health rather than falsely claiming provider/database readiness.
+- Follow-up fix: `CAOP.bat` now recovers when only the frontend or backend is already running, instead of leaving a split-brain local stack.
 - The unrelated pre-existing `backend/data/strategies.json` and `.agent.md` changes are intentionally excluded from this synchronization.
